@@ -15,6 +15,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: stoat-runtime-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   simulator-rime-runtime:
     runs-on: macos-26
@@ -98,12 +102,17 @@ jobs:
           p=os.environ["RUNNER_TEMP"]+"/rime-event-smoke.json"
           result=json.load(open(p,encoding="utf-8"))
           assert result["engineReady"], result
-          assert len(result["trials"]) == 6, result
+          assert len(result["trials"]) == 10, result
           assert result["allEventInvariantsPass"], result
-          assert result["eventsEmitted"] >= 1, ("no actual confirmed selection emitted",result)
+          assert result["eventsEmitted"] >= 6, ("expected six baseline selections to commit",result)
           assert any(row["confirmedSelection"] and not row["expanded"] for row in result["trials"]), result
           assert any(row["confirmedSelection"] and row["expanded"] for row in result["trials"]), result
-          print("Real iOS Simulator + Rime selected-candidate event invariants passed")
+          targets=[row for row in result["trials"] if row["target"] == "靠北"]
+          assert len(targets)==2
+          for row in targets:
+            print(row["id"],"top200_rank=",row["targetRankTop200"],
+                  "actual_commit=",row["commitAfterSelection"])
+          print("Real iOS Simulator + Rime selection invariants passed; targeted ranks recorded")
           PY
       - name: Upload safe fixture-only simulation report
         if: always()
