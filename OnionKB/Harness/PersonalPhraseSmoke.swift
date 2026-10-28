@@ -1,6 +1,6 @@
 import Foundation
 
-/// Two independent Simulator processes prove missing-phrase discovery and
+/// Independent Simulator processes prove missing-phrase discovery and
 /// durable full/initial lookup using real native Rime candidate selection.
 /// Only hardcoded invented example: 靠拷 (ㄎㄠ + ㄎㄠ).
 enum PersonalPhraseSmoke {
@@ -29,32 +29,67 @@ enum PersonalPhraseSmoke {
         let absent = !rawCandidates(full).contains { $0.text == word } &&
                      !rawCandidates(short).contains { $0.text == word }
         out["originalPhraseAbsent"] = absent
-        switch phase {
-        case "train":
-            store.reset()
-            for _ in 0..<2 {
-                for character in ["靠", "拷"] {
-                    engine.clear()
-                    for key in "dl".utf8 { _ = engine.processKey(Int32(key)) }
-                    let candidates = engine.allCandidates()
-                    guard let index = candidates.firstIndex(where: { $0.text == character }) else {
-                        out["missingCharacter"] = character
-                        write(out, url)
-                        return
-                    }
-                    let selection = engine.selectCandidateAbsolute(index)
-                    guard let event = selection.confirmedSelection, selection.commit == character else {
-                        out["selectionFailed"] = character
-                        write(out, url)
-                        return
-                    }
-                    store.accept(event, allowed: true)
+        func recordOneBoundary(allowed: Bool) -> Bool {
+            for character in ["靠", "拷"] {
+                engine.clear()
+                for key in "dl".utf8 { _ = engine.processKey(Int32(key)) }
+                guard let index = engine.allCandidates().firstIndex(where: { $0.text == character }) else {
+                    out["missingCharacter"] = character
+                    return false
                 }
-                _ = store.finishBoundary(allowed: true)
+                let selection = engine.selectCandidateAbsolute(index)
+                guard let event = selection.confirmedSelection, selection.commit == character else {
+                    out["selectionFailed"] = character
+                    return false
+                }
+                store.accept(event, allowed: allowed)
             }
+            _ = store.finishBoundary(allowed: allowed)
+            return true
+        }
+        switch phase {
+        case "observe-once":
+            store.reset()
+            out["realSelectionsPass"] = recordOneBoundary(allowed: true)
+            out["notLearnedYet"] = store.phrases.isEmpty &&
+                store.suggestions(for: full).isEmpty &&
+                store.suggestions(for: short).isEmpty
+        case "train":
+            // First observation was written by a *different* process.
+            out["realSelectionsPass"] = recordOneBoundary(allowed: true)
             out["learned"] = store.phrases.contains { $0.text == word }
         case "verify":
             out["persisted"] = store.phrases.contains { $0.text == word }
+            store.confirmPersonal(word, input: short)
+            out["confirmedPersonalCandidate"] =
+                store.phrases.first(where: { $0.text == word })?.confirmations == 3
+            store.penalize(word)
+            out["negativeFeedbackApplied"] =
+                store.phrases.first(where: { $0.text == word })?.confirmations == 2
+        case "privacy":
+            // Actual Rime selection events, but the caller has rejected the
+            // field: neither confirmed segments nor host text may be learned.
+            store.reset()
+            out["rejectedFieldSelectionsPass"] = recordOneBoundary(allowed: false)
+            out["rejectedFieldNoLearning"] = store.phrases.isEmpty &&
+                store.suggestions(for: full).isEmpty
+            // Cancellation of a previously verified partial sequence must
+            // also remove the evidence of the partial phrase.
+            engine.clear()
+            for key in "dl".utf8 { _ = engine.processKey(Int32(key)) }
+            if let index = engine.allCandidates().firstIndex(where: { $0.text == "靠" }),
+               let event = engine.selectCandidateAbsolute(index).confirmedSelection {
+                store.accept(event, allowed: true)
+                store.cancel()
+            }
+            engine.clear()
+            for key in "dl".utf8 { _ = engine.processKey(Int32(key)) }
+            if let index = engine.allCandidates().firstIndex(where: { $0.text == "拷" }),
+               let event = engine.selectCandidateAbsolute(index).confirmedSelection {
+                store.accept(event, allowed: true)
+            }
+            _ = store.finishBoundary(allowed: true)
+            out["cancellationNoLearning"] = store.phrases.isEmpty
         case "reset":
             store.reset()
             out["persisted"] = !store.phrases.contains { $0.text == word }
