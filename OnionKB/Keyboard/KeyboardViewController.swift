@@ -373,6 +373,16 @@ final class KeyboardViewController: UIInputViewController {
                                     children: [gtint("無色", 0), gtint("藍", 1), gtint("灰", 2), gtint("暖", 3)]))
             }
         }
+        if !personalLearning.phrases.isEmpty {
+            let forgetActions: [UIAction] = personalLearning.phrases
+                .sorted { $0.text < $1.text }.prefix(20).map { phrase in
+                    UIAction(title: "忘記「\(phrase.text)」", attributes: .destructive) { [weak self] _ in
+                        self?.personalLearning.forget(phrase.text)
+                        self?.refreshOptionsMenu()
+                    }
+                }
+            items.append(UIMenu(title: "忘記個別個人詞（前 20 個）", children: forgetActions))
+        }
         items.append(UIAction(title: "清除所有個人學習短語", attributes: .destructive) { [weak self] _ in
             self?.personalLearning.reset()
             self?.refreshOptionsMenu()
@@ -1106,7 +1116,9 @@ final class KeyboardViewController: UIInputViewController {
     private func tapSpace() {
         lastPersonalCommit = nil
         if isPreeditEmpty {
-            personalLearning.finishBoundary(allowed: canLearnPersonalPhrases)
+            if personalLearning.finishBoundary(allowed: canLearnPersonalPhrases) != nil {
+                refreshOptionsMenu()
+            }
             // §154 雙擊空格→句點：快速第二下空格 → 把前一個空格換成「. 」（前一字為英數時，比照原廠）
             let before = textDocumentProxy.documentContextBeforeInput ?? ""
             if Date().timeIntervalSince(lastSpaceInsert) < 0.3, before.hasSuffix(" "), before.count >= 2,
@@ -1226,7 +1238,11 @@ final class KeyboardViewController: UIInputViewController {
 
     private func tapEnter() {
         lastPersonalCommit = nil
-        if isPreeditEmpty { personalLearning.finishBoundary(allowed: canLearnPersonalPhrases) }
+        if isPreeditEmpty {
+            if personalLearning.finishBoundary(allowed: canLearnPersonalPhrases) != nil {
+                refreshOptionsMenu()
+            }
+        }
         else { personalLearning.cancel() }
         if isPreeditEmpty { textDocumentProxy.insertText("\n") }
         else { apply(engine.processKey(BopomoLayout.keyEnter)) }
