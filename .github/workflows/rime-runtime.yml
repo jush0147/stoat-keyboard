@@ -55,7 +55,7 @@ jobs:
           rows=[r for r in json.load(sys.stdin)["runtimes"]
                 if "iOS" in r.get("name","") and r.get("isAvailable",False)]
           exact=[r for r in rows if r.get("version")==sdk]
-          if not exact: raise SystemExit(f"No installed iOS runtime matching Xcode SDK {sdk}. Available: {[(r.get(\"name\"),r.get(\"version\")) for r in rows]}")
+          if not exact: raise SystemExit("No installed iOS runtime matching Xcode SDK "+sdk)
           print(exact[0]["identifier"])
           ' "$SDK_VERSION")
           DEVICE_TYPE=$(xcrun simctl list devicetypes -j | python3 -c '
