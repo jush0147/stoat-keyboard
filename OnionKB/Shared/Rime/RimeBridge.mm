@@ -4,6 +4,9 @@
 @implementation RimeCandidateObj
 @end
 
+@implementation RimeCompositionEvidence
+@end
+
 static RimeApi *Api(void) { return rime_get_api(); }
 
 @implementation RimeBridge {
@@ -73,6 +76,29 @@ static RimeApi *Api(void) { return rime_get_api(); }
   if (!_ready) return @"";
   const char *in = Api()->get_input(_session);
   return in ? [NSString stringWithUTF8String:in] : @"";
+}
+
+- (RimeCompositionEvidence *)compositionEvidence {
+  RimeCompositionEvidence *e = [RimeCompositionEvidence new];
+  e.rawInput = [self rawInput];
+  e.preedit = @"";
+  e.commitPreview = @"";
+  e.selectionStart = 0;
+  e.selectionEnd = 0;
+  e.cursorPosition = 0;
+  if (!_ready) return e;
+  RIME_STRUCT(RimeContext, ctx);
+  if (Api()->get_context(_session, &ctx)) {
+    if (ctx.composition.preedit)
+      e.preedit = [NSString stringWithUTF8String:ctx.composition.preedit];
+    if (ctx.commit_text_preview)
+      e.commitPreview = [NSString stringWithUTF8String:ctx.commit_text_preview];
+    e.selectionStart = ctx.composition.sel_start;
+    e.selectionEnd = ctx.composition.sel_end;
+    e.cursorPosition = ctx.composition.cursor_pos;
+    Api()->free_context(&ctx);
+  }
+  return e;
 }
 
 - (NSArray<RimeCandidateObj *> *)candidates {
