@@ -33,6 +33,6 @@ enum PersonalCandidateFusion {
         }
         // Personal words need to be reachable at a glance, not after 200 Rime
         // candidates in the expanded panel.
-        return learned + original
+        return Array(learned) + original
     }
 }
