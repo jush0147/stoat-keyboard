@@ -27,6 +27,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSArray<RimeCandidateObj *> *)allCandidates;   // 全候選列舉（展開面板，§89；上限 200）
 - (BOOL)selectCandidate:(int)index;       // 當前頁索引
 - (BOOL)selectCandidateAbsolute:(int)index;       // 全列絕對索引（展開面板，§89）
+/// Explicit user dictionary sync for cloud persistence experiments.
+- (BOOL)syncUserData;
 - (void)clear;
 
 // schema 選項開關（ascii_mode / full_shape / ascii_punct / simplification 等，§24 #2）
