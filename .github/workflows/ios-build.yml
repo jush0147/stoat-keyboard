@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - dev/ios-build-baseline
+      - dev/learning-events
   pull_request:
     branches:
       - main
