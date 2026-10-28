@@ -8,6 +8,7 @@ enum RimeEventSmoke {
         let keys: String
         let expanded: Bool
         let index: Int
+        let target: String? = nil
     }
 
     static func execute() {
@@ -36,7 +37,11 @@ enum RimeEventSmoke {
             .init(id: "no-tone-expanded", keys: "su", expanded: true, index: 0),
             .init(id: "tone-expanded-control", keys: "su3", expanded: true, index: 0),
             .init(id: "no-tone-phrase-bar", keys: "dl1o", expanded: false, index: 0),
-            .init(id: "initial-only-bar", keys: "d1", expanded: false, index: 0)
+            .init(id: "initial-only-bar", keys: "d1", expanded: false, index: 0),
+            .init(id: "full-no-tone-phrase-target", keys: "dl1o", expanded: true, index: 0, target: "靠北"),
+            .init(id: "initial-only-phrase-target", keys: "d1", expanded: true, index: 0, target: "靠北"),
+            .init(id: "first-character-target", keys: "dl", expanded: true, index: 0, target: "靠"),
+            .init(id: "second-character-target", keys: "1o", expanded: true, index: 0, target: "北")
         ]
 
         var results: [[String: Any]] = []
@@ -50,15 +55,20 @@ enum RimeEventSmoke {
                 }
             }
             let listed = trial.expanded ? engine.allCandidates() : []
-            // The candidate page index and expanded absolute index intentionally
-            // follow separate paths through RimeEngineLibrime.
-            let update = trial.expanded
-                ? engine.selectCandidateAbsolute(trial.index)
-                : engine.selectCandidate(trial.index)
-
-            let emitted = update.confirmedSelection
+            // A target can be absent in the first 200 candidates. Do not turn
+            // that into an arbitrary other selection and call it learning.
+            let targetIndex = trial.target.flatMap { target in
+                listed.firstIndex { $0.text == target }
+            }
+            let canSelect = trial.target == nil || targetIndex != nil
+            let update: RimeUpdate? = canSelect
+                ? (trial.expanded
+                    ? engine.selectCandidateAbsolute(targetIndex ?? trial.index)
+                    : engine.selectCandidate(trial.index))
+                : nil
+            let emitted = update?.confirmedSelection
             let invariant = emitted == nil ||
-                (emitted!.selectedText == update.commit &&
+                (emitted!.selectedText == update?.commit &&
                  emitted!.rawInputBeforeSelection == trial.keys &&
                  (trial.expanded
                      ? emitted!.source == .expandedPanel
@@ -68,8 +78,11 @@ enum RimeEventSmoke {
                 "keySequence": trial.keys,
                 "expanded": trial.expanded,
                 "numberListedInExpanded": listed.count,
+                "firstCandidateInExpanded": listed.first?.text as Any? ?? NSNull(),
+                "target": trial.target as Any? ?? NSNull(),
+                "targetRankTop200": targetIndex.map { $0 + 1 } as Any? ?? NSNull(),
                 "commitDuringTyping": typedCommits,
-                "commitAfterSelection": update.commit as Any? ?? NSNull(),
+                "commitAfterSelection": update?.commit as Any? ?? NSNull(),
                 "confirmedSelection": emitted != nil,
                 "confirmedText": emitted?.selectedText as Any? ?? NSNull(),
                 "capturedOriginalKeys": emitted?.rawInputBeforeSelection as Any? ?? NSNull(),
