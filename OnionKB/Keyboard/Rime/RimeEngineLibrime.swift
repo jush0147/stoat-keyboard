@@ -94,13 +94,14 @@ final class RimeEngineLibrime: RimeEngine {
             }
             chain.selections.append(selectedEvent(chain.keys[chain.selections.count]))
             let prefix = chain.chosenText
-            guard after.selectionStart == prefix.utf8.count else { return update }
             if chain.selections.count == chain.syllables.count {
-                // No learning unless Rime itself actually committed this text.
+                // Final commit clears Rime's composition and resets offsets.
+                // Only the native committed text and empty raw input decide.
                 if update.commit == prefix, after.rawInput.isEmpty {
                     update.confirmedSegments = chain.selections
                 }
             } else if update.commit == nil,
+                      after.selectionStart == prefix.utf8.count,
                       after.rawInput == chain.originalRaw,
                       after.preedit == chain.expectedPreedit,
                       after.commitPreview.hasPrefix(prefix) {
