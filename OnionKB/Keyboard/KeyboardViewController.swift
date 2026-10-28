@@ -97,6 +97,7 @@ final class KeyboardViewController: UIInputViewController {
     // keyboard extension or a release build.
     private var harnessLearningAllowed = false
     private var harnessLastAppliedCommit: String?
+    private var harnessUISmokeScheduled = false
     #endif
     private var lastPersonalCommit: String?
     private var lastPersonalCommitAt: Date = .distantPast
@@ -202,6 +203,24 @@ final class KeyboardViewController: UIInputViewController {
         // 過渡完成後只校正外觀/return（§111）；高度不在此重套（§125：轉場交系統、約束已持續存在）。
         applyKeyboardAppearance()
         styleReturnKey()
+        #if DEBUG
+        if Bundle.main.bundleIdentifier == "com.kbtest.harness",
+           ProcessInfo.processInfo.arguments.contains("--personal-ui-smoke"),
+           !harnessUISmokeScheduled {
+            harnessUISmokeScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                let result = self.harnessPersonalCandidateUISmoke()
+                let destination = FileManager.default.urls(for: .documentDirectory,
+                                                            in: .userDomainMask)[0]
+                    .appendingPathComponent("personal-ui-smoke.json")
+                if let data = try? JSONSerialization.data(withJSONObject: result,
+                                                          options: [.prettyPrinted, .sortedKeys]) {
+                    try? data.write(to: destination, options: .atomic)
+                }
+            }
+        }
+        #endif
     }
 
     override func textDidChange(_ textInput: UITextInput?) {
