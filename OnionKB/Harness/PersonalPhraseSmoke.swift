@@ -29,7 +29,7 @@ enum PersonalPhraseSmoke {
         let absent = !rawCandidates(full).contains { $0.text == word } &&
                      !rawCandidates(short).contains { $0.text == word }
         out["originalPhraseAbsent"] = absent
-        func recordOneBoundary(allowed: Bool) -> Bool {
+        func recordOneBoundary(allowed: Bool, separator: String? = nil) -> Bool {
             for character in ["靠", "拷"] {
                 engine.clear()
                 for key in "dl".utf8 { _ = engine.processKey(Int32(key)) }
@@ -44,7 +44,11 @@ enum PersonalPhraseSmoke {
                 }
                 store.accept(event, allowed: allowed)
             }
-            _ = store.finishBoundary(allowed: allowed)
+            if let separator {
+                _ = store.finishAfterSymbol(separator, allowed: allowed)
+            } else {
+                _ = store.finishBoundary(allowed: allowed)
+            }
             return true
         }
         switch phase {
@@ -108,6 +112,24 @@ enum PersonalPhraseSmoke {
             }
             _ = store.finishBoundary(allowed: true)
             out["cancellationNoLearning"] = store.phrases.isEmpty
+        case "punctuation":
+            store.reset()
+            let badOne = recordOneBoundary(allowed: true, separator: "1")
+            let badTwo = recordOneBoundary(allowed: true, separator: "「」")
+            out["nonBoundarySelectionPass"] = badOne && badTwo
+            out["nonBoundaryNoLearning"] = store.phrases.isEmpty &&
+                store.suggestions(for: short).isEmpty
+            let goodOne = recordOneBoundary(allowed: true, separator: "，")
+            let goodTwo = recordOneBoundary(allowed: true, separator: "。")
+            out["punctuationSelectionPass"] = goodOne && goodTwo
+            out["punctuationLearned"] = store.phrases.contains { $0.text == word } &&
+                store.suggestions(for: full).contains { $0.text == word } &&
+                store.suggestions(for: short).contains { $0.text == word }
+            out["punctuationRecognition"] =
+                PersonalPhraseLearning.isExplicitPhraseBoundary("。") &&
+                PersonalPhraseLearning.isExplicitPhraseBoundary("，") &&
+                !PersonalPhraseLearning.isExplicitPhraseBoundary("「」") &&
+                !PersonalPhraseLearning.isExplicitPhraseBoundary("1")
         case "reset":
             store.reset()
             out["persisted"] = !store.phrases.contains { $0.text == word }
