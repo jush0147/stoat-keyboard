@@ -963,7 +963,9 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func setMode(_ m: KBMode) {
-        personalLearning.cancel()
+        // Preserve verified Chinese segments only while opening the punctuation
+        // page. Any other mode switch ends the potential phrase.
+        if !(mode == .bopomo && m == .numbers) { personalLearning.cancel() }
         lastPersonalCommit = nil
         if isExpanded { collapseExpanded() }           // 切模式先收展開面板（§89）
         if m == .bopomo || m == .english { lastLetterMode = m }
@@ -1060,8 +1062,23 @@ final class KeyboardViewController: UIInputViewController {
         return b
     }
 
+    /// Explicit punctuation closes the verified phrase, never arbitrary host
+    /// text. Switching to 123 from Chinese keeps evidence only until the next
+    /// symbol is entered; digits and non-boundary symbols discard it.
+    private func finishLearningAtSymbol(_ symbol: String) {
+        guard isPreeditEmpty else { personalLearning.cancel(); return }
+        let normalField = textDocumentProxy.keyboardType == .default &&
+                          textDocumentProxy.textContentType == nil
+        let chineseInput = (mode == .bopomo || (mode == .numbers && lastLetterMode == .bopomo)) &&
+                           !englishMode
+        if personalLearning.finishAfterSymbol(symbol, allowed: normalField && chineseInput) != nil {
+            refreshOptionsMenu()
+        }
+    }
+
     /// 上下划：清掉進行中的注音組字後，直接插英文（§28 #2）。
     private func insertEnglish(_ s: String) {
+        finishLearningAtSymbol(s)
         if !isPreeditEmpty {
             engine.clear()
             refresh(RimeUpdate(preedit: "", candidates: [], commit: nil))
@@ -1519,7 +1536,11 @@ final class KeyboardViewController: UIInputViewController {
             b.setTitle(sym, for: .normal)
             b.titleLabel?.font = .systemFont(ofSize: 19 * fontScale)
             b.setTitleColor(.secondaryLabel, for: .normal)
-            b.addAction(UIAction { [weak self] _ in self?.playClick(); self?.textDocumentProxy.insertText(sym) }, for: .touchUpInside)   // §154 音效
+            b.addAction(UIAction { [weak self] _ in
+                self?.playClick()
+                self?.finishLearningAtSymbol(sym)
+                self?.textDocumentProxy.insertText(sym)
+            }, for: .touchUpInside)   // §154 音效
             candidateStack.addArrangedSubview(b)
         }
     }
