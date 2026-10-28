@@ -18,7 +18,7 @@ permissions:
 jobs:
   simulator-rime-runtime:
     runs-on: macos-26
-    timeout-minutes: 35
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - name: Install XcodeGen
@@ -45,18 +45,33 @@ jobs:
       - name: Boot installed iOS Simulator runtime
         run: |
           set -euo pipefail
-          xcrun simctl list devices available
-          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          set -euo pipefail
+          SDK_VERSION=$(xcrun --sdk iphonesimulator --show-sdk-version)
+          echo "Simulator SDK version: $SDK_VERSION"
+          xcrun simctl list runtimes
+          RUNTIME=$(xcrun simctl list runtimes -j | python3 -c '
           import json,sys
-          data=json.load(sys.stdin)
-          candidates=[d["udid"] for runtime,devices in data["devices"].items()
-                      if "iOS" in runtime for d in devices if d.get("isAvailable",True)]
-          if not candidates: raise SystemExit("No available iOS Simulator device")
-          print(candidates[0])
+          sdk=sys.argv[1]
+          rows=[r for r in json.load(sys.stdin)["runtimes"]
+                if "iOS" in r.get("name","") and r.get("isAvailable",False)]
+          exact=[r for r in rows if r.get("version")==sdk]
+          if not exact: raise SystemExit(f"No installed iOS runtime matching Xcode SDK {sdk}. Available: {[(r.get(\"name\"),r.get(\"version\")) for r in rows]}")
+          print(exact[0]["identifier"])
+          ' "$SDK_VERSION")
+          DEVICE_TYPE=$(xcrun simctl list devicetypes -j | python3 -c '
+          import json,sys
+          rows=json.load(sys.stdin)["devicetypes"]
+          choices=[r for r in rows if r.get("name")=="iPhone 17 Pro"]
+          if not choices: choices=[r for r in rows if r.get("name","").startswith("iPhone")]
+          if not choices: raise SystemExit("No iPhone Simulator device type available")
+          print(choices[0]["identifier"])
           ')
+          UDID=$(xcrun simctl create "Stoat-Event-CI" "$DEVICE_TYPE" "$RUNTIME")
           echo "SIM_UDID=$UDID" >> "$GITHUB_ENV"
+          echo "Created device $UDID with runtime $RUNTIME"
           xcrun simctl boot "$UDID"
-          xcrun simctl bootstatus "$UDID" -b
+          # Prevent indefinite BackBoard/CoreSimulator readiness hangs.
+          perl -e 'alarm 240; exec @ARGV' xcrun simctl bootstatus "$UDID" -b
       - name: Install and launch real Rime smoke harness in Simulator
         run: |
           set -euo pipefail
