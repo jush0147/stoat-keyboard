@@ -119,7 +119,7 @@ jobs:
           set -euo pipefail
           APP="$RUNNER_TEMP/rime-harness-derived/Build/Products/Debug-iphonesimulator/KBHarness.app"
           DATA_DIR=$(xcrun simctl get_app_container "$SIM_UDID" com.kbtest.harness data)
-          for PHASE in observe-once train verify reset privacy punctuation segmented segment-cancel segmented3 segmented3-restart segmented4 segmented3-interrupt; do
+          for PHASE in observe-once train verify reset privacy punctuation segmented segment-cancel segmented3 segmented3-restart segmented4 segmented3-interrupt segmented5 segmented6 segmented-mixed; do
             xcrun simctl terminate "$SIM_UDID" com.kbtest.harness || true
             xcrun simctl launch "$SIM_UDID" com.kbtest.harness "--personal-phrase-phase=$PHASE"
             RESULT="$DATA_DIR/Documents/personal-phrase-$PHASE.json"
@@ -136,8 +136,8 @@ jobs:
           root=os.environ["RUNNER_TEMP"]
           def load(p):
               return json.load(open(f"{root}/personal-phrase-{p}.json", encoding="utf-8"))
-          first,train,verify,reset,privacy,punctuation,segmented,canceled,three,three_reboot,four,interrupt=map(load,
-              ("observe-once","train","verify","reset","privacy","punctuation","segmented","segment-cancel","segmented3","segmented3-restart","segmented4","segmented3-interrupt"))
+          first,train,verify,reset,privacy,punctuation,segmented,canceled,three,three_reboot,four,interrupt,five,six,mixed=map(load,
+              ("observe-once","train","verify","reset","privacy","punctuation","segmented","segment-cancel","segmented3","segmented3-restart","segmented4","segmented3-interrupt","segmented5","segmented6","segmented-mixed"))
           assert first["engineReady"] and first["originalPhraseAbsent"],first
           assert first["realSelectionsPass"] and first["notLearnedYet"],first
           assert train["realSelectionsPass"] and train["learned"],train
@@ -159,6 +159,12 @@ jobs:
           assert three_reboot["threePersisted"],three_reboot
           assert four["fourNativeSegmentsVerified"] and four["fourLearned"],four
           assert interrupt["partialEditDiscarded"],interrupt
+          assert five["fiveInitiallyAbsent"] and five["fiveNativeSegmentsVerified"],five
+          assert five["fiveLearned"],five
+          assert six["sixInitiallyAbsent"] and six["sixNativeSegmentsVerified"],six
+          assert six["sixLearned"] and six["sixTopOne"],six
+          assert mixed["mixedInitiallyAbsent"] and mixed["mixedPhoneticsVerified"],mixed
+          assert mixed["mixedLearned"],mixed
           assert reset["persisted"] and not reset["fullFound"] and not reset["initialFound"],reset
           print("Real Rime absent phrase learned across restarts, recalled, corrected, privacy-gated and reset")
           PY
