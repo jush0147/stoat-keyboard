@@ -124,17 +124,29 @@ jobs:
             assert record["failures"] == [],(phase,record["failures"])
             print(" ",phase,"checkpoints",[(z["confirmed"],z["rankings"]["initialOnly"]["rankTop200"],
                                       z["rankings"]["fullNoTone"]["rankTop200"]) for z in record["checkpointRanks"]])
-          expected={"fullNoTone":3,"initialOnly":2}
-          assert all(rows["baseline"]["before"][k]["rankTop200"]==v for k,v in expected.items()),rows["baseline"]
-          assert all(rows["clean-control"]["before"][k]["rankTop200"]==v for k,v in expected.items()),rows["clean-control"]
-          assert rows["after-full"]["before"]==rows["train-full"]["after"],"Full-training data did not persist across process"
-          assert rows["after-both"]["before"]==rows["train-short"]["after"],"Shorthand-training data did not persist across process"
-          first=rows["baseline"]["before"]["initialOnly"]["rankTop200"]
-          last=rows["after-both"]["before"]["initialOnly"]["rankTop200"]
-          print("Native Rime user preference: ㄎㄅ→靠北 rank",first,"=>",last)
-          print("Top-1 promotion achieved:",last==1)
-          print("TEST SUCCESS: genuine committed selections, restart data and clean control verified.")
-          # Top-1 promotion is empirical, not assumed or fabricated.
+          # An earlier experiment found an initial rank of 2, while the
+          # completely fresh current profile found 48. Rime's in-session
+          # candidate history matters; do not hardcode either rank.
+          before=rows["baseline"]["before"]
+          control=rows["clean-control"]["before"]
+          assert before==control,("Untrained reinstall did not reproduce fresh baseline",before,control)
+          assert rows["train-full"]["before"]==before,"Training did not start with an untrained profile"
+          assert rows["train-short"]["before"]==rows["after-full"]["before"],"Second training phase began with unexpected profile"
+          for key in ("fullNoTone","initialOnly"):
+            initial=before[key]["rankTop200"]
+            assert initial is not None and initial > 0,(key,before)
+            assert rows["train-full"]["after"][key]["rankTop200"] is not None,("Post-training missing candidates",key)
+          assert rows["after-full"]["before"]==rows["train-full"]["after"],"Full-training ranking not retained across process"
+          assert rows["after-both"]["before"]==rows["train-short"]["after"],"Shorthand-training ranking not retained across process"
+          for key in ("fullNoTone","initialOnly"):
+            first=before[key]["rankTop200"]
+            after_full=rows["after-full"]["before"][key]["rankTop200"]
+            final=rows["after-both"]["before"][key]["rankTop200"]
+            print(f"Native Rime {key} 靠北 rank: {first} => {after_full} => {final}; clean control {control[key]['rankTop200']}")
+            print("Top-1 after original no-tone phrase training:",after_full==1)
+            print("Top-1 after additional shorthand training:",final==1)
+          print("TEST SUCCESS: verified candidate commits, dynamic clean control, and cross-process persistence.")
+          # These are Rime data for this test only. Do not infer Gboard learning thresholds.
           PY
 
       - name: Archive fixture-only per-process observations
