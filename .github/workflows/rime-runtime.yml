@@ -142,6 +142,8 @@ jobs:
           assert first["realSelectionsPass"] and first["notLearnedYet"],first
           assert train["realSelectionsPass"] and train["learned"],train
           assert train["fullFound"] and train["initialFound"],train
+          assert train["fusedFullFirst"] and train["fusedInitialFirst"],train
+          assert train["nativeIndicesPreserved"],train
           assert verify["persisted"] and verify["fullFound"] and verify["initialFound"],verify
           assert verify["confirmedPersonalCandidate"] and verify["negativeFeedbackApplied"],verify
           assert privacy["rejectedFieldSelectionsPass"] and privacy["rejectedFieldNoLearning"],privacy
