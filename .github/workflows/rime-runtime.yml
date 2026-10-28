@@ -1,0 +1,106 @@
+name: iOS Rime Event Runtime Smoke
+
+on:
+  push:
+    branches: [dev/learning-events]
+    paths:
+      - ".github/workflows/rime-runtime.yml"
+      - "OnionKB/Harness/**"
+      - "OnionKB/Keyboard/RimeEngine.swift"
+      - "OnionKB/Keyboard/Rime/RimeEngineLibrime.swift"
+      - "OnionKB/Shared/Rime/**"
+      - "OnionKB/project.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  simulator-rime-runtime:
+    runs-on: macos-26
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: |
+          xcodebuild -version
+          if ! command -v xcodegen >/dev/null 2>&1; then brew install xcodegen; fi
+      - name: Select actual precompiled Stoat dictionary and generate project
+        run: |
+          mkdir -p RimeData
+          bash OnionKB/Scripts/select-variant.sh plustrim
+          cd OnionKB
+          xcodegen generate
+      - name: Build KBHarness using real librime and bundled RimeData
+        run: |
+          set -o pipefail
+          cd OnionKB
+          xcodebuild -project OnionKB.xcodeproj -scheme KBHarness \
+            -configuration Debug -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/rime-harness-derived" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            build 2>&1 | tee "$RUNNER_TEMP/rime-harness-build.log"
+      - name: Boot installed iOS Simulator runtime
+        run: |
+          set -euo pipefail
+          xcrun simctl list devices available
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json,sys
+          data=json.load(sys.stdin)
+          candidates=[d["udid"] for runtime,devices in data["devices"].items()
+                      if "iOS" in runtime for d in devices if d.get("isAvailable",True)]
+          if not candidates: raise SystemExit("No available iOS Simulator device")
+          print(candidates[0])
+          ')
+          echo "SIM_UDID=$UDID" >> "$GITHUB_ENV"
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+      - name: Install and launch real Rime smoke harness in Simulator
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/rime-harness-derived/Build/Products/Debug-iphonesimulator/KBHarness.app"
+          test -f "$APP/KBHarness"
+          test -n "$(find "$APP" -name 'bopomo_onion*.bin' -print -quit)"
+          xcrun simctl install "$SIM_UDID" "$APP"
+          xcrun simctl launch "$SIM_UDID" com.kbtest.harness --rime-event-smoke
+          DATA_DIR=$(xcrun simctl get_app_container "$SIM_UDID" com.kbtest.harness data)
+          RESULT="$DATA_DIR/Documents/rime-event-smoke.json"
+          for n in {1..45}; do
+            if test -s "$RESULT"; then
+              cp "$RESULT" "$RUNNER_TEMP/rime-event-smoke.json"
+              break
+            fi
+            sleep 2
+          done
+          test -s "$RUNNER_TEMP/rime-event-smoke.json"
+          cat "$RUNNER_TEMP/rime-event-smoke.json"
+      - name: Assert actual Rime event contract (not fake fixture results)
+        run: |
+          python3 - <<'PY'
+          import json,os
+          p=os.environ["RUNNER_TEMP"]+"/rime-event-smoke.json"
+          result=json.load(open(p,encoding="utf-8"))
+          assert result["engineReady"], result
+          assert len(result["trials"]) == 6, result
+          assert result["allEventInvariantsPass"], result
+          assert result["eventsEmitted"] >= 1, ("no actual confirmed selection emitted",result)
+          assert any(row["confirmedSelection"] and not row["expanded"] for row in result["trials"]), result
+          assert any(row["confirmedSelection"] and row["expanded"] for row in result["trials"]), result
+          print("Real iOS Simulator + Rime selected-candidate event invariants passed")
+          PY
+      - name: Upload safe fixture-only simulation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-real-rime-event-smoke
+          path: ${{ runner.temp }}/rime-event-smoke.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: On failure show focused compiler diagnostics
+        if: failure()
+        run: |
+          if test -f "$RUNNER_TEMP/rime-harness-build.log"; then
+            grep -E 'error:|fatal error:|BUILD FAILED' "$RUNNER_TEMP/rime-harness-build.log" | tail -50 || true
+          fi
