@@ -1,0 +1,147 @@
+name: iOS Native Rime Preference Learning
+
+on:
+  push:
+    branches: [dev/learning-events]
+    paths:
+      - ".github/workflows/rime-learning.yml"
+      - "OnionKB/Harness/**"
+      - "OnionKB/Keyboard/Rime/RimeEngineLibrime.swift"
+      - "OnionKB/Keyboard/RimeEngine.swift"
+      - "OnionKB/Shared/Rime/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-rime-learning-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  simulator-learning:
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare pinned bundled Rime and XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then brew install xcodegen; fi
+          mkdir -p RimeData
+          bash OnionKB/Scripts/select-variant.sh plustrim
+          cd OnionKB
+          xcodegen generate
+
+      - name: Build actual Rime iOS KBHarness
+        run: |
+          set -o pipefail
+          cd OnionKB
+          xcodebuild -project OnionKB.xcodeproj -scheme KBHarness \
+            -configuration Debug -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/rime-learning-derived" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            build > "$RUNNER_TEMP/rime-learning-build.log" 2>&1 || {
+              grep -E 'error:|fatal error:|BUILD FAILED' "$RUNNER_TEMP/rime-learning-build.log" | tail -60
+              exit 1
+            }
+
+      - name: Create and boot fresh SDK-matched Simulator
+        run: |
+          set -euo pipefail
+          SDK_VERSION=$(xcrun --sdk iphonesimulator --show-sdk-version)
+          RUNTIME=$(xcrun simctl list runtimes -j | python3 -c '
+          import json,sys
+          rows=[r for r in json.load(sys.stdin)["runtimes"]
+                if "iOS" in r.get("name","") and r.get("isAvailable",False)]
+          found=[r for r in rows if r.get("version")==sys.argv[1]]
+          if not found: raise SystemExit("No SDK-matched available iOS runtime")
+          print(found[0]["identifier"])
+          ' "$SDK_VERSION")
+          TYPE=$(xcrun simctl list devicetypes -j | python3 -c '
+          import json,sys
+          rows=json.load(sys.stdin)["devicetypes"]
+          matches=[x for x in rows if x.get("name")=="iPhone 17 Pro"]
+          if not matches: matches=[x for x in rows if x.get("name","").startswith("iPhone")]
+          if not matches: raise SystemExit("No iPhone type")
+          print(matches[0]["identifier"])
+          ')
+          UDID=$(xcrun simctl create "Stoat-Rime-Learn-CI" "$TYPE" "$RUNTIME")
+          echo "SIM_UDID=$UDID" >> "$GITHUB_ENV"
+          xcrun simctl boot "$UDID"
+          perl -e 'alarm 240; exec @ARGV' xcrun simctl bootstatus "$UDID" -b
+
+      - name: Run fresh, full-training, restart, shorthand-training and clean-control phases
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/rime-learning-derived/Build/Products/Debug-iphonesimulator/KBHarness.app"
+          test -f "$APP/KBHarness"
+          test -n "$(find "$APP" -name 'bopomo_onion*.bin' -print -quit)"
+          xcrun simctl install "$SIM_UDID" "$APP"
+          for PHASE in baseline train-full after-full train-short after-both clean-control; do
+            if [ "$PHASE" = clean-control ]; then
+              xcrun simctl uninstall "$SIM_UDID" com.kbtest.harness
+              xcrun simctl install "$SIM_UDID" "$APP"
+            fi
+            echo "=== $PHASE (separate app process) ==="
+            xcrun simctl launch "$SIM_UDID" com.kbtest.harness "--rime-learning-phase=$PHASE"
+            DIR=$(xcrun simctl get_app_container "$SIM_UDID" com.kbtest.harness data)
+            REPORT="$DIR/Documents/rime-learning-$PHASE.json"
+            FOUND=0
+            for n in {1..60}; do
+              if [ -s "$REPORT" ]; then
+                cp "$REPORT" "$RUNNER_TEMP/rime-learning-$PHASE.json"
+                FOUND=1
+                break
+              fi
+              sleep 2
+            done
+            if [ "$FOUND" -ne 1 ]; then
+              echo "No result from $PHASE"
+              exit 1
+            fi
+            xcrun simctl terminate "$SIM_UDID" com.kbtest.harness || true
+          done
+
+      - name: Audit real native user dictionary behavior
+        run: |
+          python3 - <<'PY'
+          import json,os
+          p=os.environ["RUNNER_TEMP"]
+          phases=["baseline","train-full","after-full","train-short","after-both","clean-control"]
+          rows={x:json.load(open(f"{p}/rime-learning-{x}.json",encoding="utf-8")) for x in phases}
+          for phase,record in rows.items():
+            assert record["ready"],(phase,record)
+            print("phase:",phase)
+            for point in ["before","after"]:
+              rank=record[point]
+              print(" ",point,[(key,r["rankTop200"],r["first"]) for key,r in rank.items()])
+          for phase in ["train-full","train-short"]:
+            record=rows[phase]
+            assert record["confirmedCommits"] == 24,(phase,record)
+            assert record["selectionAttempts"] == 24,(phase,record)
+            assert record["failures"] == [],(phase,record["failures"])
+            print(" ",phase,"checkpoints",[(z["confirmed"],z["rankings"]["initialOnly"]["rankTop200"],
+                                      z["rankings"]["fullNoTone"]["rankTop200"]) for z in record["checkpointRanks"]])
+          expected={"fullNoTone":3,"initialOnly":2}
+          assert all(rows["baseline"]["before"][k]["rankTop200"]==v for k,v in expected.items()),rows["baseline"]
+          assert all(rows["clean-control"]["before"][k]["rankTop200"]==v for k,v in expected.items()),rows["clean-control"]
+          assert rows["after-full"]["before"]==rows["train-full"]["after"],"Full-training data did not persist across process"
+          assert rows["after-both"]["before"]==rows["train-short"]["after"],"Shorthand-training data did not persist across process"
+          first=rows["baseline"]["before"]["initialOnly"]["rankTop200"]
+          last=rows["after-both"]["before"]["initialOnly"]["rankTop200"]
+          print("Native Rime user preference: ㄎㄅ→靠北 rank",first,"=>",last)
+          print("Top-1 promotion achieved:",last==1)
+          print("TEST SUCCESS: genuine committed selections, restart data and clean control verified.")
+          # Top-1 promotion is empirical, not assumed or fabricated.
+          PY
+
+      - name: Archive fixture-only per-process observations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: actual-ios-rime-personalization-phases
+          path: ${{ runner.temp }}/rime-learning-*.json
+          if-no-files-found: warn
+          retention-days: 14
