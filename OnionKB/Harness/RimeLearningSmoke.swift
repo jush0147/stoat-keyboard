@@ -75,11 +75,16 @@ enum RimeLearningSmoke {
             report["confirmedCommits"] = confirmedCommits
             report["checkpointRanks"] = checkpointsOut
             report["failures"] = failures
-            // This API asks librime to flush/sync its internal user dictionary.
-            // The following process-start check remains the definitive test.
+            // Read rankings BEFORE sync_user_data(): Rime may invalidate the
+            // current session after synchronization. Ranking a stale session
+            // produced null candidates in the first experiment, even though
+            // the NEXT process saw the learned phrase at rank 1.
+            report["after"] = ranks(engine)
             report["syncSucceeded"] = engine.syncUserData()
+        } else {
+            report["after"] = ranks(engine)
         }
-        report["after"] = ranks(engine)
+        // A new process independently measures persisted rankings.
         write(report, to: reportURL)
     }
 
