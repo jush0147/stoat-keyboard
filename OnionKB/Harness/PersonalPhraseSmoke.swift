@@ -261,18 +261,23 @@ enum PersonalPhraseSmoke {
             store.reset()
         case "segmented-mixed":
             store.reset()
-            let chars = ["靠", "北", "拷"]
-            let keys = ["dl", "1o", "dl"]
+            // The original three-character fixture 靠北拷 was already a Rime
+            // candidate. This deliberately less natural four-character
+            // fixture must be absent BEFORE claiming new-word learning.
+            let chars = ["拷", "北", "烤", "靠"]
+            let keys = ["dl", "1o", "dl", "dl"]
             let text = chars.joined()
+            let fullKeys = keys.joined()
+            let shortKeys = "d1dd"
             out["mixedInitiallyAbsent"] =
-                !rawCandidates("dl1odl").contains { $0.text == text } &&
-                !rawCandidates("d1d").contains { $0.text == text }
+                !rawCandidates(fullKeys).contains { $0.text == text } &&
+                !rawCandidates(shortKeys).contains { $0.text == text }
             let first = recordContinuous(chars, syllableKeys: keys)
             let second = recordContinuous(chars, syllableKeys: keys)
             out["mixedPhoneticsVerified"] = first?.map(\.rawInputBeforeSelection) == keys &&
                                             second?.map(\.rawInputBeforeSelection) == keys
-            out["mixedLearned"] = store.suggestions(for: "dl1odl").contains { $0.text == text } &&
-                store.suggestions(for: "d1d").contains { $0.text == text }
+            out["mixedLearned"] = store.suggestions(for: fullKeys).contains { $0.text == text } &&
+                store.suggestions(for: shortKeys).contains { $0.text == text }
             store.reset()
         case "segmented3-interrupt":
             store.reset()
