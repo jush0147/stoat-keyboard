@@ -123,6 +123,11 @@ static RimeApi *Api(void) { return rime_get_api(); }
   return Api()->select_candidate(_session, (size_t)index);
 }
 
+- (BOOL)syncUserData {
+  if (!_ready) return NO;
+  return Api()->sync_user_data() ? YES : NO;
+}
+
 - (void)clear {
   if (_ready) Api()->clear_composition(_session);
 }
