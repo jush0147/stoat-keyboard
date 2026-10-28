@@ -11,6 +11,13 @@ final class HarnessAppDelegate: UIResponder, UIApplicationDelegate {
         win.rootViewController = HarnessVC()
         win.makeKeyAndVisible()
         window = win
+        if ProcessInfo.processInfo.arguments.contains("--rime-event-smoke") {
+            // Only hardcoded, non-sensitive cases; the report is written into
+            // this Simulator app's Documents folder for GitHub CI to inspect.
+            DispatchQueue.main.async {
+                RimeEventSmoke.execute()
+            }
+        }
         return true
     }
 }
