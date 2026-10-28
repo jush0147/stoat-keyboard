@@ -114,6 +114,35 @@ jobs:
                   "actual_commit=",row["commitAfterSelection"])
           print("Real iOS Simulator + Rime selection invariants passed; targeted ranks recorded")
           PY
+      - name: Verify missing-phrase learning in real iOS Simulator and process restart
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/rime-harness-derived/Build/Products/Debug-iphonesimulator/KBHarness.app"
+          DATA_DIR=$(xcrun simctl get_app_container "$SIM_UDID" com.kbtest.harness data)
+          for PHASE in train verify reset; do
+            xcrun simctl terminate "$SIM_UDID" com.kbtest.harness || true
+            xcrun simctl launch "$SIM_UDID" com.kbtest.harness "--personal-phrase-phase=$PHASE"
+            RESULT="$DATA_DIR/Documents/personal-phrase-$PHASE.json"
+            for n in {1..35}; do
+              if test -s "$RESULT"; then break; fi
+              sleep 2
+            done
+            test -s "$RESULT"
+            cp "$RESULT" "$RUNNER_TEMP/personal-phrase-$PHASE.json"
+            cat "$RESULT"
+          done
+          python3 - <<'PY'
+          import json,os
+          root=os.environ["RUNNER_TEMP"]
+          def load(p):
+              return json.load(open(f"{root}/personal-phrase-{p}.json", encoding="utf-8"))
+          a,b,c=map(load,("train","verify","reset"))
+          assert a["engineReady"] and a["originalPhraseAbsent"],a
+          assert a["learned"] and a["fullFound"] and a["initialFound"],a
+          assert b["persisted"] and b["fullFound"] and b["initialFound"],b
+          assert c["persisted"] and not c["fullFound"] and not c["initialFound"],c
+          print("Real Rime selected unknown phrase, two boundaries learned, restart retained, reset removed")
+          PY
       - name: Upload safe fixture-only simulation report
         if: always()
         uses: actions/upload-artifact@v4
