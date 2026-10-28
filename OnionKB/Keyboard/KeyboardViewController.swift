@@ -955,6 +955,7 @@ final class KeyboardViewController: UIInputViewController {
 
     private func setMode(_ m: KBMode) {
         personalLearning.cancel()
+        lastPersonalCommit = nil
         if isExpanded { collapseExpanded() }           // 切模式先收展開面板（§89）
         if m == .bopomo || m == .english { lastLetterMode = m }
         if m == .numbers { numberSubPage = 0 }        // 進 123 頁從第一頁開始（§66）
@@ -1092,6 +1093,7 @@ final class KeyboardViewController: UIInputViewController {
 
     /// 注音鍵 tap：英文模式插字面字母（依 Shift 大小寫，§29 #1 / §31）；否則送注音。
     private func tapBopomo(_ key: BopomoLayout.Key) {
+        lastPersonalCommit = nil
         if englishMode {
             textDocumentProxy.insertText(typeUppercase ? key.swipeUpper : key.swipeLower)
             if shiftState == .shifted { shiftState = .off; updateModeStyling() }
@@ -1102,6 +1104,7 @@ final class KeyboardViewController: UIInputViewController {
 
 
     private func tapSpace() {
+        lastPersonalCommit = nil
         if isPreeditEmpty {
             personalLearning.finishBoundary(allowed: canLearnPersonalPhrases)
             // §154 雙擊空格→句點：快速第二下空格 → 把前一個空格換成「. 」（前一字為英數時，比照原廠）
@@ -1222,6 +1225,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func tapEnter() {
+        lastPersonalCommit = nil
         if isPreeditEmpty { personalLearning.finishBoundary(allowed: canLearnPersonalPhrases) }
         else { personalLearning.cancel() }
         if isPreeditEmpty { textDocumentProxy.insertText("\n") }
