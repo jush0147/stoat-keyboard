@@ -22,8 +22,21 @@ final class RimeEngineLibrime: RimeEngine {
     }
 
     func selectCandidate(_ index: Int) -> RimeUpdate {
-        bridge.selectCandidate(Int32(index))
-        return snapshot()
+        // Snapshot BEFORE Rime mutates the composition. A selection may be
+        // partial or only change the active candidate; do not call it a commit
+        // until the actual result can be compared with the selected text.
+        let current = bridge.candidates()
+        let selected = current.indices.contains(index) ? current[index].text : nil
+        let raw = bridge.rawInput()
+        let succeeded = bridge.selectCandidate(Int32(index))
+        var update = snapshot()
+        if succeeded, let selected, !selected.isEmpty,
+           let committed = update.commit, committed == selected, !raw.isEmpty {
+            update.confirmedSelection = RimeConfirmedSelection(
+                source: .candidateBar, selectedText: selected,
+                rawInputBeforeSelection: raw)
+        }
+        return update
     }
 
     func allCandidates() -> [Candidate] {
@@ -31,8 +44,19 @@ final class RimeEngineLibrime: RimeEngine {
     }
 
     func selectCandidateAbsolute(_ index: Int) -> RimeUpdate {
-        bridge.selectCandidateAbsolute(Int32(index))
-        return snapshot()
+        // Expanded candidates use absolute indices, NOT the current page.
+        let options = bridge.allCandidates()
+        let selected = options.indices.contains(index) ? options[index].text : nil
+        let raw = bridge.rawInput()
+        let succeeded = bridge.selectCandidateAbsolute(Int32(index))
+        var update = snapshot()
+        if succeeded, let selected, !selected.isEmpty,
+           let committed = update.commit, committed == selected, !raw.isEmpty {
+            update.confirmedSelection = RimeConfirmedSelection(
+                source: .expandedPanel, selectedText: selected,
+                rawInputBeforeSelection: raw)
+        }
+        return update
     }
 
     func clear() { bridge.clear() }
