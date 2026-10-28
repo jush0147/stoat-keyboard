@@ -51,6 +51,47 @@ enum PersonalPhraseSmoke {
             }
             return true
         }
+        /// One continuous Rime composition, with real partial candidate
+        /// selections (mix candidate bar and expanded panel when possible).
+        /// No synthetic RimeConfirmedSelection objects are constructed.
+        func recordContinuous(_ characters: [String], allowed: Bool = true) -> [RimeConfirmedSelection]? {
+            engine.clear()
+            let fullInput = String(repeating: "dl", count: characters.count)
+            for k in fullInput.utf8 { _ = engine.processKey(Int32(k)) }
+            var confirmed: [RimeConfirmedSelection] = []
+            for (position, character) in characters.enumerated() {
+                let all = engine.allCandidates()
+                guard let index = all.firstIndex(where: { $0.text == character }) else {
+                    out["missingSegment"] = character
+                    out["missingSegmentPosition"] = position
+                    return nil
+                }
+                let update = index < 5
+                    ? engine.selectCandidate(index)
+                    : engine.selectCandidateAbsolute(index)
+                if position < characters.count - 1 {
+                    guard update.commit == nil && update.confirmedSegments.isEmpty else {
+                        out["prematureSegmentCommitPosition"] = position
+                        return nil
+                    }
+                } else {
+                    guard update.commit == characters.joined() else {
+                        out["finalSegmentCommit"] = update.commit as Any? ?? NSNull()
+                        return nil
+                    }
+                    confirmed = update.confirmedSegments
+                }
+            }
+            guard confirmed.count == characters.count,
+                  confirmed.map(\.selectedText) == characters,
+                  confirmed.allSatisfy({ $0.rawInputBeforeSelection == "dl" }) else {
+                out["invalidSegmentCount"] = confirmed.count
+                return nil
+            }
+            for event in confirmed { store.accept(event, allowed: allowed) }
+            _ = store.finishBoundary(allowed: allowed)
+            return confirmed
+        }
         switch phase {
         case "observe-once":
             store.reset()
@@ -160,6 +201,53 @@ enum PersonalPhraseSmoke {
             out["segmentedTop1"] = PersonalCandidateFusion.merge(
                 native: rawCandidates(short), personal: store.suggestions(for: short),
                 rawInput: short).first?.candidate.text == word
+        case "segmented3":
+            store.reset()
+            let text = "靠拷烤"
+            let first = recordContinuous(["靠", "拷", "烤"])
+            let second = recordContinuous(["靠", "拷", "烤"])
+            out["threeNativeSegmentsVerified"] = first?.count == 3 && second?.count == 3
+            out["threeLearned"] = store.phrases.contains { $0.text == text } &&
+                store.suggestions(for: "dldldl").contains { $0.text == text } &&
+                store.suggestions(for: "ddd").contains { $0.text == text }
+            out["threeInitialTopOne"] = PersonalCandidateFusion.merge(
+                native: rawCandidates("ddd"), personal: store.suggestions(for: "ddd"),
+                rawInput: "ddd").first?.candidate.text == text
+        case "segmented3-restart":
+            out["threePersisted"] = store.suggestions(for: "dldldl").contains { $0.text == "靠拷烤" } &&
+                store.suggestions(for: "ddd").contains { $0.text == "靠拷烤" }
+            store.reset()
+        case "segmented4":
+            store.reset()
+            let text = "靠拷烤考"
+            let first = recordContinuous(["靠", "拷", "烤", "考"])
+            let second = recordContinuous(["靠", "拷", "烤", "考"])
+            out["fourNativeSegmentsVerified"] = first?.count == 4 && second?.count == 4
+            out["fourLearned"] = store.phrases.contains { $0.text == text } &&
+                store.suggestions(for: "dldldldl").contains { $0.text == text } &&
+                store.suggestions(for: "dddd").contains { $0.text == text }
+            store.reset()
+        case "segmented3-interrupt":
+            store.reset()
+            engine.clear()
+            for k in "dldldl".utf8 { _ = engine.processKey(Int32(k)) }
+            var uncommitted = false
+            if let index = engine.allCandidates().firstIndex(where: { $0.text == "靠" }) {
+                let update = engine.selectCandidateAbsolute(index)
+                uncommitted = update.commit == nil && update.confirmedSegments.isEmpty
+            }
+            // Any intervening key must destroy the tentative chain. A fresh
+            // composition's final selection must not replay the earlier one.
+            _ = engine.processKey(Int32(BopomoLayout.keyBackspace))
+            engine.clear()
+            for k in "dldl".utf8 { _ = engine.processKey(Int32(k)) }
+            let firstNew = engine.allCandidates().firstIndex(where: { $0.text == "靠" })
+            var stale = false
+            if let index = firstNew {
+                let update = engine.selectCandidateAbsolute(index)
+                stale = !update.confirmedSegments.isEmpty
+            }
+            out["partialEditDiscarded"] = uncommitted && !stale && store.phrases.isEmpty
         case "segment-cancel":
             store.reset()
             engine.clear()
