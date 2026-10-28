@@ -8,17 +8,22 @@ final class HarnessAppDelegate: UIResponder, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         let win = UIWindow(frame: UIScreen.main.bounds)
+        let personalArg = ProcessInfo.processInfo.arguments.first { $0.hasPrefix("--personal-phrase-phase=") }
         let learningArg = ProcessInfo.processInfo.arguments.first {
             $0.hasPrefix("--rime-learning-phase=")
         }
         // Learning CI runs the actual engine in an otherwise empty host app.
         // Do not instantiate a second Rime engine via KeyboardViewController.
-        win.rootViewController = learningArg == nil ? HarnessVC() : UIViewController()
+        win.rootViewController = learningArg == nil && personalArg == nil ? HarnessVC() : UIViewController()
         win.makeKeyAndVisible()
         window = win
         if let learningArg = learningArg {
             let phase = String(learningArg.dropFirst("--rime-learning-phase=".count))
             DispatchQueue.main.async { RimeLearningSmoke.execute(phase: phase) }
+        }
+        if let personalArg = personalArg {
+            let phase = String(personalArg.dropFirst("--personal-phrase-phase=".count))
+            DispatchQueue.main.async { PersonalPhraseSmoke.execute(phase: phase) }
         }
         if ProcessInfo.processInfo.arguments.contains("--rime-event-smoke") {
             // Only hardcoded, non-sensitive cases; the report is written into
