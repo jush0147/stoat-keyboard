@@ -91,6 +91,11 @@ final class KeyboardViewController: UIInputViewController {
     private let candidateStack = UIStackView()
     private weak var candidateRowRef: UIStackView?   // 非注音模式隱藏（§80）
     private var currentCandidates: [Candidate] = []
+    private lazy var personalLearning = PersonalPhraseLearning()
+    private var personalCandidateInputs: [Int: String] = [:]
+    private var lastPersonalCommit: String?
+    private var lastPersonalCommitAt: Date = .distantPast
+    private var lastRawKeys = ""
     private var bopomoKeys: [(key: BopomoLayout.Key, main: UIButton, eng: UILabel)] = []
     private var cnEnButton: UIButton?                                // 中/英 快切鍵
     private var shiftButton: UIButton?                              // ⇧ 英文 shift 實鍵（buildEnglishRows 指派；updateModeStyling/refreshEnglishCase 用）
@@ -197,6 +202,7 @@ final class KeyboardViewController: UIInputViewController {
     override func textDidChange(_ textInput: UITextInput?) {
         super.textDidChange(textInput)
         applyKeyboardAppearance()   // App 切換/聚焦時深淺可能變
+        personalLearning.cancel()   // Host editing/focus changed: no cross-field phrase learning.
         styleReturnKey()            // 有無文字變動→ return 灰↔藍即時更新（§109）
     }
 
@@ -939,6 +945,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func setMode(_ m: KBMode) {
+        personalLearning.cancel()
         if isExpanded { collapseExpanded() }           // 切模式先收展開面板（§89）
         if m == .bopomo || m == .english { lastLetterMode = m }
         if m == .numbers { numberSubPage = 0 }        // 進 123 頁從第一頁開始（§66）
@@ -1087,6 +1094,7 @@ final class KeyboardViewController: UIInputViewController {
 
     private func tapSpace() {
         if isPreeditEmpty {
+            personalLearning.finishBoundary(allowed: canLearnPersonalPhrases)
             // §154 雙擊空格→句點：快速第二下空格 → 把前一個空格換成「. 」（前一字為英數時，比照原廠）
             let before = textDocumentProxy.documentContextBeforeInput ?? ""
             if Date().timeIntervalSince(lastSpaceInsert) < 0.3, before.hasSuffix(" "), before.count >= 2,
@@ -1193,12 +1201,20 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func tapBackspace() {
+        personalLearning.cancel()
+        if isPreeditEmpty, let text = lastPersonalCommit,
+           Date().timeIntervalSince(lastPersonalCommitAt) < 5 {
+            personalLearning.penalize(text)
+            lastPersonalCommit = nil
+        }
         if isPreeditEmpty { textDocumentProxy.deleteBackward() }
         else { apply(engine.processKey(BopomoLayout.keyBackspace)) }
         if mode == .english { refreshEnglishCandidates(); autoCapitalize() }   // §142 / §154 刪除後重評自動大寫
     }
 
     private func tapEnter() {
+        if isPreeditEmpty { personalLearning.finishBoundary(allowed: canLearnPersonalPhrases) }
+        else { personalLearning.cancel() }
         if isPreeditEmpty { textDocumentProxy.insertText("\n") }
         else { apply(engine.processKey(BopomoLayout.keyEnter)) }
     }
@@ -1219,7 +1235,19 @@ final class KeyboardViewController: UIInputViewController {
         refresh(RimeUpdate(preedit: "", candidates: [], commit: nil))
     }
 
+    private var canLearnPersonalPhrases: Bool {
+        // Fail closed on missing traits, secure entry, and non-general fields.
+        guard let type = textDocumentProxy.keyboardType, type == .default,
+              textDocumentProxy.textContentType == nil else { return false }
+        return mode == .bopomo && !englishMode
+    }
+
     private func apply(_ update: RimeUpdate) {
+        if let event = update.confirmedSelection {
+            personalLearning.accept(event, allowed: canLearnPersonalPhrases)
+        } else if update.commit != nil {
+            personalLearning.cancel()
+        }
         if let commit = update.commit, !commit.isEmpty {
             if useMarkedText {
                 // §149/§151 commit 取代當前 marked preedit → unmark 定稿
@@ -1231,6 +1259,18 @@ final class KeyboardViewController: UIInputViewController {
             }
         }
         refresh(update)
+    }
+
+    private func commitPersonalCandidate(_ text: String, input: String) {
+        guard canLearnPersonalPhrases else { return }
+        personalLearning.confirmPersonal(text, input: input)
+        personalLearning.cancel()
+        engine.clear()
+        clearMarkedText()
+        textDocumentProxy.insertText(text)
+        lastPersonalCommit = text
+        lastPersonalCommitAt = Date()
+        refresh(RimeUpdate(preedit: "", candidates: [], commit: nil))
     }
 
     /// §151 取消組字（丟棄 marked 注音）。跨宿主可靠做法：unmarkText 把 marked 注音定稿成真文字，再 deleteBackward
@@ -1248,6 +1288,16 @@ final class KeyboardViewController: UIInputViewController {
 
     private func refresh(_ update: RimeUpdate) {
         currentCandidates = update.candidates
+        personalCandidateInputs.removeAll()
+        if !update.preedit.isEmpty, canLearnPersonalPhrases,
+           let native = engine as? RimeEngineLibrime {
+            let raw = native.currentRawInput()
+            let existing = Set(currentCandidates.map(\.text))
+            for phrase in personalLearning.suggestions(for: raw) where !existing.contains(phrase.text) {
+                personalCandidateInputs[currentCandidates.count] = raw
+                currentCandidates.append(Candidate(text: phrase.text, comment: "個人詞"))
+            }
+        }
         preeditText = update.preedit.isEmpty ? " " : update.preedit             // §155 isPreeditEmpty 狀態來源（注音已內嵌輸入框）
         // §173 注音 preedit 顯示：內嵌 ON→輸入框(marked text)、隱藏候選列 label；OFF→候選列 label、不碰宿主（快）。
         if useMarkedText {
@@ -1266,7 +1316,7 @@ final class KeyboardViewController: UIInputViewController {
         }
         styleReturnKey()                                         // 組字/清空→ return 灰↔藍即時更新（§110）
         candidateStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        if update.candidates.isEmpty && update.preedit.isEmpty {
+        if currentCandidates.isEmpty && update.preedit.isEmpty {
             if isExpanded { collapseExpanded() }                 // 組字清空→自動收合展開面板（§89）
             showQuickSymbols()                                   // 無組字→常用符號/顏文字（§35 #1）
             return
@@ -1274,13 +1324,21 @@ final class KeyboardViewController: UIInputViewController {
         var didHighlight = update.preedit.isEmpty                   // §150 預測候選（輸入完、preedit 空）不高亮，比照原廠（圖3）；組字中才 pill
         var slot = 0                                                // §164 候選鈕 pool 索引
         let font = UIFont.systemFont(ofSize: 22 * fontScale)
-        for (i, cand) in update.candidates.enumerated() {
+        for (i, cand) in currentCandidates.enumerated() {
             guard Self.isRenderable(cand.text) else { continue }   // 過濾生僻字 tofu（§69）；保留原 index
             let b = candButton(slot); slot += 1                    // §164 重用，不每鍵新配置
             b.setTitle(cand.text, for: .normal)                    // 原廠候選無編號（§53）
             b.titleLabel?.font = font
             let idx = i
-            b.onTap = { [weak self] in self?.playClick(); self?.apply(self!.engine.selectCandidate(idx)) }   // §154 音效 + 選字
+            b.onTap = { [weak self] in
+                guard let self else { return }
+                self.playClick()
+                if let input = self.personalCandidateInputs[idx] {
+                    self.commitPersonalCandidate(cand.text, input: input)
+                } else {
+                    self.apply(self.engine.selectCandidate(idx))
+                }
+            }   // §154 音效 + 選字
             if !didHighlight {                                      // §148 首選 pill：白圓角底 + 內距，餘候選扁平（reuse 時須清掉舊 pill）
                 didHighlight = true
                 b.backgroundColor = KBColor.candHighlight
@@ -1322,7 +1380,9 @@ final class KeyboardViewController: UIInputViewController {
 
     /// 展開：隱鍵盤、改顯全候選格（依字寬 wrap、左對齊、絕對索引選字）。
     private func buildExpandedPanel() {
-        let cands = engine.allCandidates().enumerated().filter { Self.isRenderable($0.element.text) }
+        let cands = (engine.allCandidates() + personalLearning.suggestions(for: (engine as? RimeEngineLibrime)?.currentRawInput() ?? "").filter { phrase in
+            !engine.allCandidates().contains { $0.text == phrase.text }
+        }.map { Candidate(text: $0.text, comment: "個人詞") }).enumerated().filter { Self.isRenderable($0.element.text) }
         guard !cands.isEmpty else { return }
 
         let scroll = UIScrollView()
@@ -1397,7 +1457,12 @@ final class KeyboardViewController: UIInputViewController {
         b.heightAnchor.constraint(equalToConstant: 46).isActive = true
         b.addAction(UIAction { [weak self] _ in
             guard let self else { return }
-            self.apply(self.engine.selectCandidateAbsolute(absoluteIndex))
+            if absoluteIndex >= self.engine.allCandidates().count {
+                let raw = (self.engine as? RimeEngineLibrime)?.currentRawInput() ?? ""
+                self.commitPersonalCandidate(text, input: raw)
+            } else {
+                self.apply(self.engine.selectCandidateAbsolute(absoluteIndex))
+            }
             if self.isExpanded { self.collapseExpanded() }   // 選字後收合回候選列（§89）
         }, for: .touchUpInside)
         return b
