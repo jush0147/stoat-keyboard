@@ -92,6 +92,12 @@ final class KeyboardViewController: UIInputViewController {
     private weak var candidateRowRef: UIStackView?   // 非注音模式隱藏（§80）
     private var currentCandidates: [Candidate] = []
     private lazy var personalLearning = PersonalPhraseLearning()
+    #if DEBUG
+    // Test-only embedded KBHarness switch. Never enabled in an actual
+    // keyboard extension or a release build.
+    private var harnessLearningAllowed = false
+    private var harnessLastAppliedCommit: String?
+    #endif
     private var lastPersonalCommit: String?
     private var lastPersonalCommitAt: Date = .distantPast
     private var learningDocumentID: UUID?
@@ -1281,6 +1287,11 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private var canLearnPersonalPhrases: Bool {
+        #if DEBUG
+        if Bundle.main.bundleIdentifier == "com.kbtest.harness" && harnessLearningAllowed {
+            return mode == .bopomo && !englishMode
+        }
+        #endif
         // Fail closed on missing traits, secure entry, and non-general fields.
         guard let type = textDocumentProxy.keyboardType, type == .default,
               textDocumentProxy.textContentType == nil else { return false }
@@ -1288,6 +1299,11 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func apply(_ update: RimeUpdate) {
+        #if DEBUG
+        if Bundle.main.bundleIdentifier == "com.kbtest.harness", let commit = update.commit {
+            harnessLastAppliedCommit = commit
+        }
+        #endif
         if !update.confirmedSegments.isEmpty {
             // Only native Rime's final exact commit authorizes the prior
             // partial selections; never learn tentative composition text.
@@ -1582,6 +1598,82 @@ final class KeyboardViewController: UIInputViewController {
         kaomojiPanel?.removeFromSuperview()
         kaomojiPanel = nil
     }
+
+    #if DEBUG
+    /// Exercises the *production* candidate buttons and their registered
+    /// UIActions inside KBHarness, not a replacement candidate renderer.
+    /// Unlike third-party host UI automation, the embedded controller has
+    /// no real text document proxy. Never claim this is end-to-end extension
+    /// behavior inside Messages/LINE.
+    func harnessPersonalCandidateUISmoke() -> [String: Bool] {
+        guard Bundle.main.bundleIdentifier == "com.kbtest.harness",
+              engine is RimeEngineLibrime else { return ["ready": false] }
+        let fixture = PersonalPhrase(text: "靠拷烤", fullKeys: "dldldl",
+                                     initials: "ddd", confirmations: 2)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("stoat-ui-fixture-personal.json")
+        do {
+            try JSONEncoder().encode([fixture]).write(to: url, options: .atomic)
+        } catch { return ["ready": false] }
+        personalLearning = PersonalPhraseLearning(storageURL: url)
+        harnessLearningAllowed = true
+        engine.setOption("ascii_mode", false)
+        func type(_ input: String) {
+            engine.clear()
+            for key in input.utf8 { refresh(engine.processKey(Int32(key))) }
+        }
+        func titles() -> [String] {
+            candidateStack.arrangedSubviews.compactMap {
+                ($0 as? UIButton)?.title(for: .normal)
+            }
+        }
+        func firstExpandedButton(_ container: UIView) -> UIButton? {
+            if let button = container as? UIButton,
+               button.title(for: .normal) == fixture.text { return button }
+            for subview in container.subviews {
+                if let match = firstExpandedButton(subview) { return match }
+            }
+            return nil
+        }
+
+        type("ddd")
+        let barFirst = titles().first == fixture.text
+        (candidateStack.arrangedSubviews.first as? UIButton)?
+            .sendActions(for: .touchUpInside)
+        let barTap = personalLearning.phrases.first(where: {
+            $0.text == fixture.text
+        })?.confirmations == 3 &&
+            (engine as? RimeEngineLibrime)?.currentRawInput().isEmpty == true
+
+        type("ddd")
+        toggleExpanded()
+        let expandedRendered = expandedPanel.flatMap(firstExpandedButton)
+        expandedRendered?.sendActions(for: .touchUpInside)
+        let expandedTap = expandedRendered != nil &&
+            personalLearning.phrases.first(where: {
+                $0.text == fixture.text
+            })?.confirmations == 4 && !isExpanded
+
+        // The native candidate remains index zero in Rime even though
+        // personal words are rendered ahead of it in the keyboard bar.
+        type("dldldl")
+        let nativeFirst = engine.allCandidates().first?.text
+        let secondVisible = titles().dropFirst().first == nativeFirst
+        harnessLastAppliedCommit = nil
+        if candidateStack.arrangedSubviews.count > 1 {
+            (candidateStack.arrangedSubviews[1] as? UIButton)?
+                .sendActions(for: .touchUpInside)
+        }
+        let nativeTap = nativeFirst != nil &&
+            harnessLastAppliedCommit == nativeFirst
+
+        harnessLearningAllowed = false
+        engine.clear()
+        personalLearning.reset()
+        return ["ready": true, "barFirst": barFirst, "barTap": barTap,
+                "expandedTap": expandedTap, "nativeIndexPreserved": secondVisible && nativeTap]
+    }
+    #endif
 
     // 語音：自訂鍵盤無法錄音/叫起 iOS 聽寫（§32 #2）→ 鍵盤端不提供觸發。
     // 容器 App 若有錄音結果（手動開 App 錄製），viewWillAppear 仍會掃描上字。
