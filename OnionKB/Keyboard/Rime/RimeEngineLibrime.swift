@@ -16,19 +16,29 @@ final class RimeEngineLibrime: RimeEngine {
         guard bridge.isReady() else { return nil }
     }
 
-    /// This is intentionally only a *two single-character* split, not an
-    /// arbitrary segment decoder. The prefix is tentative until the native
-    /// final commit matches exactly. Any further typing invalidates the chain.
-    private struct TentativeSegment {
-        let first: RimeConfirmedSelection
+    /// Selection evidence for one uninterrupted, explicitly selected Rime
+    /// composition. A selection is tentative until Rime's final native commit
+    /// exactly matches the entire selected sequence (2...6 single Han chars).
+    /// Every phonetic syllable is read from Rime's spaced preedit, and must
+    /// reverse-map to the original DaQian keys without guessing.
+    private struct TentativeChain {
         let originalRaw: String
-        let remainingPreedit: String
-        let remainingKeys: String
+        let syllables: [String]
+        let keys: [String]
+        var selections: [RimeConfirmedSelection]
+
+        var chosenText: String { selections.map(\.selectedText).joined() }
+        var remainingPreedit: String {
+            syllables.dropFirst(selections.count).joined(separator: " ")
+        }
+        var expectedPreedit: String { chosenText + remainingPreedit }
     }
-    private var tentativeSegment: TentativeSegment?
+    private var tentativeChain: TentativeChain?
 
     func processKey(_ keycode: Int32) -> RimeUpdate {
-        tentativeSegment = nil
+        // A new key may edit, extend, delete or finalize the old composition.
+        // Never reuse previously selected segments after an intervening key.
+        tentativeChain = nil
         bridge.processKey(keycode)
         return snapshot()
     }
@@ -61,55 +71,70 @@ final class RimeEngineLibrime: RimeEngine {
         let succeeded = perform()
         let after = bridge.compositionEvidence()
         var update = snapshot()
-        guard succeeded, let selected, !selected.isEmpty, !before.rawInput.isEmpty else {
-            tentativeSegment = nil
+        guard succeeded, let selected, Self.oneHan(selected),
+              !before.rawInput.isEmpty else {
+            tentativeChain = nil
             return update
         }
 
-        if let prior = tentativeSegment {
-            tentativeSegment = nil
-            if Self.oneHan(selected),
-               before.rawInput == prior.originalRaw,
-               before.preedit == prior.first.selectedText + prior.remainingPreedit,
-               let committed = update.commit,
-               committed == prior.first.selectedText + selected,
-               after.rawInput.isEmpty {
-                update.confirmedSegments = [
-                    prior.first,
-                    RimeConfirmedSelection(source: source, selectedText: selected,
-                                           rawInputBeforeSelection: prior.remainingKeys)
-                ]
+        let selectedEvent: (String) -> RimeConfirmedSelection = { keys in
+            RimeConfirmedSelection(source: source, selectedText: selected,
+                                   rawInputBeforeSelection: keys)
+        }
+
+        if var chain = tentativeChain {
+            // Before attempting to append, invalidate all chains on
+            // composition edits, unexpected selection offsets or text.
+            tentativeChain = nil
+            guard before.rawInput == chain.originalRaw,
+                  before.selectionStart == chain.chosenText.utf8.count,
+                  before.preedit == chain.expectedPreedit,
+                  chain.selections.count < chain.syllables.count else {
+                return update
+            }
+            chain.selections.append(selectedEvent(chain.keys[chain.selections.count]))
+            let prefix = chain.chosenText
+            guard after.selectionStart == prefix.utf8.count else { return update }
+            if chain.selections.count == chain.syllables.count {
+                // No learning unless Rime itself actually committed this text.
+                if update.commit == prefix, after.rawInput.isEmpty {
+                    update.confirmedSegments = chain.selections
+                }
+            } else if update.commit == nil,
+                      after.rawInput == chain.originalRaw,
+                      after.preedit == chain.expectedPreedit,
+                      after.commitPreview.hasPrefix(prefix) {
+                tentativeChain = chain
             }
             return update
         }
 
-        // Preserve the existing proven full-candidate event contract.
+        // Existing independent single-character commit behavior remains
+        // unchanged, including the native Rime user dictionary.
         if let committed = update.commit, committed == selected {
-            update.confirmedSelection = RimeConfirmedSelection(
-                source: source, selectedText: selected,
-                rawInputBeforeSelection: before.rawInput)
+            update.confirmedSelection = selectedEvent(before.rawInput)
             return update
         }
 
-        // Strictly require Rime's *actual* two spaced phonetic syllables.
-        // We do not split initial-only shorthand, unspaced guesses, or
-        // ambiguous multi-syllable candidates ourselves.
-        guard update.commit == nil, Self.oneHan(selected),
+        // Accept only full, spaced Rime Zhuyin syllables, not abbreviated
+        // input or arbitrary phonetic splitting. No host-context inspection.
+        guard update.commit == nil,
               before.selectionStart == 0,
               after.selectionStart == selected.utf8.count,
               after.rawInput == before.rawInput,
               after.commitPreview.hasPrefix(selected) else { return update }
-        let tokens = before.preedit.split(whereSeparator: { $0.isWhitespace })
-        guard tokens.count == 2,
-              let firstKeys = Self.keys(forBopomoSyllable: String(tokens[0])),
-              let secondKeys = Self.keys(forBopomoSyllable: String(tokens[1])),
-              firstKeys + secondKeys == before.rawInput,
-              after.preedit == selected + String(tokens[1]) else { return update }
-        tentativeSegment = TentativeSegment(
-            first: RimeConfirmedSelection(source: source, selectedText: selected,
-                                          rawInputBeforeSelection: firstKeys),
-            originalRaw: before.rawInput, remainingPreedit: String(tokens[1]),
-            remainingKeys: secondKeys)
+        let syllables = before.preedit.split(whereSeparator: { $0.isWhitespace })
+            .map(String.init)
+        guard (2...6).contains(syllables.count) else { return update }
+        let resolved = syllables.map(Self.keys(forBopomoSyllable:))
+        guard resolved.allSatisfy({ $0 != nil }) else { return update }
+        let keys = resolved.compactMap { $0 }
+        guard keys.joined() == before.rawInput else { return update }
+        var chain = TentativeChain(originalRaw: before.rawInput,
+                                   syllables: syllables, keys: keys,
+                                   selections: [selectedEvent(keys[0])])
+        guard after.preedit == chain.expectedPreedit else { return update }
+        tentativeChain = chain
         return update
     }
 
@@ -145,9 +170,9 @@ final class RimeEngineLibrime: RimeEngine {
     // Ephemeral observation only; not evidence of per-character readings.
     func compositionEvidence() -> RimeCompositionEvidence { bridge.compositionEvidence() }
 
-    func clear() { tentativeSegment = nil; bridge.clear() }
+    func clear() { tentativeChain = nil; bridge.clear() }
     func setOption(_ name: String, _ value: Bool) {
-        tentativeSegment = nil
+        tentativeChain = nil
         bridge.setOption(name, value: value)
     }
     func getOption(_ name: String) -> Bool { bridge.getOption(name) }
