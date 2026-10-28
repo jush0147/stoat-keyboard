@@ -71,7 +71,7 @@ final class RimeEngineLibrime: RimeEngine {
         let succeeded = perform()
         let after = bridge.compositionEvidence()
         var update = snapshot()
-        guard succeeded, let selected, Self.oneHan(selected),
+        guard succeeded, let selected, !selected.isEmpty,
               !before.rawInput.isEmpty else {
             tentativeChain = nil
             return update
@@ -86,7 +86,8 @@ final class RimeEngineLibrime: RimeEngine {
             // Before attempting to append, invalidate all chains on
             // composition edits, unexpected selection offsets or text.
             tentativeChain = nil
-            guard before.rawInput == chain.originalRaw,
+            guard Self.oneHan(selected),
+                  before.rawInput == chain.originalRaw,
                   before.selectionStart == chain.chosenText.utf8.count,
                   before.preedit == chain.expectedPreedit,
                   chain.selections.count < chain.syllables.count else {
@@ -119,7 +120,7 @@ final class RimeEngineLibrime: RimeEngine {
 
         // Accept only full, spaced Rime Zhuyin syllables, not abbreviated
         // input or arbitrary phonetic splitting. No host-context inspection.
-        guard update.commit == nil,
+        guard update.commit == nil, Self.oneHan(selected),
               before.selectionStart == 0,
               after.selectionStart == selected.utf8.count,
               after.rawInput == before.rawInput,
