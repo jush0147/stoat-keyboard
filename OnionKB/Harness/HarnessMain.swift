@@ -43,10 +43,32 @@ final class HarnessVC: UIViewController {
     private let kb = KeyboardViewController()
     private let field = UITextField()
     private var nativeMode: Bool { ProcessInfo.processInfo.environment["NATIVE_KB"] == "1" }
+    private var extensionHostMode: Bool {
+        ProcessInfo.processInfo.arguments.contains("--host-keyboard-ui")
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground   // 白底，方便對比鍵盤灰
+
+        if extensionHostMode {
+            // The actual system keyboard-hosting path. Never embed the
+            // KeyboardViewController or manufacture keyboard events here.
+            field.accessibilityIdentifier = "stoat.host.textfield"
+            field.borderStyle = .roundedRect
+            field.placeholder = "Third-party keyboard host"
+            field.autocorrectionType = .no
+            field.textContentType = nil
+            field.keyboardType = .default
+            field.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(field)
+            NSLayoutConstraint.activate([
+                field.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+                field.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+                field.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 80),
+            ])
+            return
+        }
 
         if nativeMode {                            // 原廠鍵盤取色模式：UITextField → 系統鍵盤
             field.borderStyle = .roundedRect
@@ -81,6 +103,6 @@ final class HarnessVC: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        if nativeMode { field.becomeFirstResponder() }
+        if nativeMode || extensionHostMode { field.becomeFirstResponder() }
     }
 }
