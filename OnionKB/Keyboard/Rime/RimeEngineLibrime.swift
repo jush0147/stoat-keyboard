@@ -64,6 +64,9 @@ final class RimeEngineLibrime: RimeEngine {
 
     func currentRawInput() -> String { bridge.rawInput() }
 
+    // Ephemeral observation only; not evidence of per-character readings.
+    func compositionEvidence() -> RimeCompositionEvidence { bridge.compositionEvidence() }
+
     func clear() { bridge.clear() }
     func setOption(_ name: String, _ value: Bool) { bridge.setOption(name, value: value) }
     func getOption(_ name: String) -> Bool { bridge.getOption(name) }
