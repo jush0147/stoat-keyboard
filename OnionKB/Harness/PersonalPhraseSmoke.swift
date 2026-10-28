@@ -54,9 +54,12 @@ enum PersonalPhraseSmoke {
         /// One continuous Rime composition, with real partial candidate
         /// selections (mix candidate bar and expanded panel when possible).
         /// No synthetic RimeConfirmedSelection objects are constructed.
-        func recordContinuous(_ characters: [String], allowed: Bool = true) -> [RimeConfirmedSelection]? {
+        func recordContinuous(_ characters: [String], syllableKeys: [String]? = nil,
+                              allowed: Bool = true) -> [RimeConfirmedSelection]? {
             engine.clear()
-            let fullInput = String(repeating: "dl", count: characters.count)
+            let keys = syllableKeys ?? Array(repeating: "dl", count: characters.count)
+            guard keys.count == characters.count else { return nil }
+            let fullInput = keys.joined()
             for k in fullInput.utf8 { _ = engine.processKey(Int32(k)) }
             var confirmed: [RimeConfirmedSelection] = []
             for (position, character) in characters.enumerated() {
@@ -84,7 +87,7 @@ enum PersonalPhraseSmoke {
             }
             guard confirmed.count == characters.count,
                   confirmed.map(\.selectedText) == characters,
-                  confirmed.allSatisfy({ $0.rawInputBeforeSelection == "dl" }) else {
+                  confirmed.map(\.rawInputBeforeSelection) == keys else {
                 out["invalidSegmentCount"] = confirmed.count
                 return nil
             }
@@ -226,6 +229,50 @@ enum PersonalPhraseSmoke {
             out["fourLearned"] = store.phrases.contains { $0.text == text } &&
                 store.suggestions(for: "dldldldl").contains { $0.text == text } &&
                 store.suggestions(for: "dddd").contains { $0.text == text }
+            store.reset()
+        case "segmented5":
+            store.reset()
+            let chars = ["靠", "拷", "烤", "考", "靠"]
+            let text = chars.joined()
+            out["fiveInitiallyAbsent"] =
+                !rawCandidates("dldldldldl").contains { $0.text == text } &&
+                !rawCandidates("ddddd").contains { $0.text == text }
+            let first = recordContinuous(chars)
+            let second = recordContinuous(chars)
+            out["fiveNativeSegmentsVerified"] = first?.count == 5 && second?.count == 5
+            out["fiveLearned"] = store.suggestions(for: "dldldldldl").contains { $0.text == text } &&
+                store.suggestions(for: "ddddd").contains { $0.text == text }
+            store.reset()
+        case "segmented6":
+            store.reset()
+            let chars = ["靠", "拷", "烤", "考", "靠", "拷"]
+            let text = chars.joined()
+            out["sixInitiallyAbsent"] =
+                !rawCandidates("dldldldldldl").contains { $0.text == text } &&
+                !rawCandidates("dddddd").contains { $0.text == text }
+            let first = recordContinuous(chars)
+            let second = recordContinuous(chars)
+            out["sixNativeSegmentsVerified"] = first?.count == 6 && second?.count == 6
+            out["sixLearned"] = store.suggestions(for: "dldldldldldl").contains { $0.text == text } &&
+                store.suggestions(for: "dddddd").contains { $0.text == text }
+            out["sixTopOne"] = PersonalCandidateFusion.merge(
+                native: rawCandidates("dddddd"), personal: store.suggestions(for: "dddddd"),
+                rawInput: "dddddd").first?.candidate.text == text
+            store.reset()
+        case "segmented-mixed":
+            store.reset()
+            let chars = ["靠", "北", "拷"]
+            let keys = ["dl", "1o", "dl"]
+            let text = chars.joined()
+            out["mixedInitiallyAbsent"] =
+                !rawCandidates("dl1odl").contains { $0.text == text } &&
+                !rawCandidates("d1d").contains { $0.text == text }
+            let first = recordContinuous(chars, syllableKeys: keys)
+            let second = recordContinuous(chars, syllableKeys: keys)
+            out["mixedPhoneticsVerified"] = first?.map(\.rawInputBeforeSelection) == keys &&
+                                            second?.map(\.rawInputBeforeSelection) == keys
+            out["mixedLearned"] = store.suggestions(for: "dl1odl").contains { $0.text == text } &&
+                store.suggestions(for: "d1d").contains { $0.text == text }
             store.reset()
         case "segmented3-interrupt":
             store.reset()
