@@ -8,7 +8,15 @@ enum RimeEventSmoke {
         let keys: String
         let expanded: Bool
         let index: Int
-        let target: String? = nil
+        let target: String?
+
+        init(id: String, keys: String, expanded: Bool, index: Int, target: String? = nil) {
+            self.id = id
+            self.keys = keys
+            self.expanded = expanded
+            self.index = index
+            self.target = target
+        }
     }
 
     static func execute() {
