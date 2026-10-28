@@ -1,0 +1,79 @@
+name: iOS App and Keyboard Build
+
+on:
+  push:
+    branches:
+      - dev/ios-build-baseline
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  simulator-build:
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inspect Xcode and checked-in binary dependencies
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphonesimulator --show-sdk-version
+          test -f ios-build/out/librime.xcframework/ios-arm64-simulator/librime_full.a
+          test -f ios-build/out/headers/rime_api.h
+          test -d RimeData-variants/shared-plustrim
+          test -d RimeData-variants/build-plustrim
+          file ios-build/out/librime.xcframework/ios-arm64-simulator/librime_full.a
+
+      - name: Install XcodeGen when missing
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+
+      - name: Select pinned plustrim dictionary and generate Xcode project
+        run: |
+          mkdir -p RimeData
+          bash OnionKB/Scripts/select-variant.sh plustrim
+          cd OnionKB
+          xcodegen generate
+          xcodebuild -list -project OnionKB.xcodeproj
+
+      - name: Build full iOS app and embedded keyboard extension without signing
+        run: |
+          set -o pipefail
+          cd OnionKB
+          xcodebuild \
+            -project OnionKB.xcodeproj \
+            -scheme OnionKB \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/stoat-derived" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            build 2>&1 | tee "$RUNNER_TEMP/stoat-build.log"
+
+      - name: Confirm App contains keyboard extension and Rime assets
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/stoat-derived/Build/Products/Debug-iphonesimulator/OnionKB.app"
+          test -d "$APP"
+          test -d "$APP/PlugIns/OnionKBKeyboard.appex"
+          test -f "$APP/OnionKB"
+          test -f "$APP/PlugIns/OnionKBKeyboard.appex/OnionKBKeyboard"
+          find "$APP" -name 'bopomo_onion*.bin' | head -10
+          test -n "$(find "$APP" -name 'bopomo_onion*.bin' -print -quit)"
+          echo 'Verified compiled host app, keyboard extension, and prebuilt Rime dictionary.'
+
+      - name: Save short build diagnostic on failure
+        if: failure()
+        run: |
+          if test -f "$RUNNER_TEMP/stoat-build.log"; then
+            grep -E 'error:|fatal error:|BUILD FAILED|warning:' "$RUNNER_TEMP/stoat-build.log" | tail -60 || true
+          fi
