@@ -130,6 +130,53 @@ enum PersonalPhraseSmoke {
                 PersonalPhraseLearning.isExplicitPhraseBoundary("，") &&
                 !PersonalPhraseLearning.isExplicitPhraseBoundary("「」") &&
                 !PersonalPhraseLearning.isExplicitPhraseBoundary("1")
+        case "segmented":
+            store.reset()
+            var valid = true
+            for _ in 0..<2 {
+                engine.clear()
+                for k in full.utf8 { _ = engine.processKey(Int32(k)) }
+                guard let first = engine.allCandidates().firstIndex(where: { $0.text == "靠" }) else {
+                    valid = false; break
+                }
+                let beforeCommit = engine.selectCandidateAbsolute(first)
+                guard beforeCommit.commit == nil, beforeCommit.confirmedSegments.isEmpty,
+                      let second = engine.allCandidates().firstIndex(where: { $0.text == "拷" }) else {
+                    valid = false; break
+                }
+                let final = engine.selectCandidateAbsolute(second)
+                let segments = final.confirmedSegments
+                guard final.commit == word, segments.map(\.selectedText) == ["靠", "拷"],
+                      segments.map(\.rawInputBeforeSelection) == ["dl", "dl"] else {
+                    valid = false; break
+                }
+                for event in segments { store.accept(event, allowed: true) }
+                _ = store.finishBoundary(allowed: true)
+            }
+            out["nativeSegmentSelectionsVerified"] = valid
+            out["segmentedNewPhraseLearned"] = valid &&
+                store.suggestions(for: full).contains(where: { $0.text == word }) &&
+                store.suggestions(for: short).contains(where: { $0.text == word })
+            out["segmentedTop1"] = PersonalCandidateFusion.merge(
+                native: rawCandidates(short), personal: store.suggestions(for: short),
+                rawInput: short).first?.candidate.text == word
+        case "segment-cancel":
+            store.reset()
+            engine.clear()
+            for k in full.utf8 { _ = engine.processKey(Int32(k)) }
+            var premature = false
+            if let first = engine.allCandidates().firstIndex(where: { $0.text == "靠" }) {
+                let partial = engine.selectCandidateAbsolute(first)
+                premature = !partial.confirmedSegments.isEmpty
+            }
+            engine.clear()
+            for k in "dl".utf8 { _ = engine.processKey(Int32(k)) }
+            let single: RimeUpdate? = engine.allCandidates()
+                .firstIndex(where: { $0.text == "拷" })
+                .map { engine.selectCandidateAbsolute($0) }
+            out["discardedPartialNotReplayed"] = !premature &&
+                single?.confirmedSegments.isEmpty == true &&
+                store.phrases.isEmpty
         case "reset":
             store.reset()
             out["persisted"] = !store.phrases.contains { $0.text == word }
