@@ -16,27 +16,29 @@ final class RimeEngineLibrime: RimeEngine {
         guard bridge.isReady() else { return nil }
     }
 
+    /// This is intentionally only a *two single-character* split, not an
+    /// arbitrary segment decoder. The prefix is tentative until the native
+    /// final commit matches exactly. Any further typing invalidates the chain.
+    private struct TentativeSegment {
+        let first: RimeConfirmedSelection
+        let originalRaw: String
+        let remainingPreedit: String
+        let remainingKeys: String
+    }
+    private var tentativeSegment: TentativeSegment?
+
     func processKey(_ keycode: Int32) -> RimeUpdate {
+        tentativeSegment = nil
         bridge.processKey(keycode)
         return snapshot()
     }
 
     func selectCandidate(_ index: Int) -> RimeUpdate {
-        // Snapshot BEFORE Rime mutates the composition. A selection may be
-        // partial or only change the active candidate; do not call it a commit
-        // until the actual result can be compared with the selected text.
-        let current = bridge.candidates()
-        let selected = current.indices.contains(index) ? current[index].text : nil
-        let raw = bridge.rawInput()
-        let succeeded = bridge.selectCandidate(Int32(index))
-        var update = snapshot()
-        if succeeded, let selected, !selected.isEmpty,
-           let committed = update.commit, committed == selected, !raw.isEmpty {
-            update.confirmedSelection = RimeConfirmedSelection(
-                source: .candidateBar, selectedText: selected,
-                rawInputBeforeSelection: raw)
+        let options = bridge.candidates()
+        let selected = options.indices.contains(index) ? options[index].text : nil
+        return verifiedSelection(selected: selected, source: .candidateBar) {
+            bridge.selectCandidate(Int32(index))
         }
-        return update
     }
 
     func allCandidates() -> [Candidate] {
@@ -44,19 +46,95 @@ final class RimeEngineLibrime: RimeEngine {
     }
 
     func selectCandidateAbsolute(_ index: Int) -> RimeUpdate {
-        // Expanded candidates use absolute indices, NOT the current page.
         let options = bridge.allCandidates()
         let selected = options.indices.contains(index) ? options[index].text : nil
-        let raw = bridge.rawInput()
-        let succeeded = bridge.selectCandidateAbsolute(Int32(index))
-        var update = snapshot()
-        if succeeded, let selected, !selected.isEmpty,
-           let committed = update.commit, committed == selected, !raw.isEmpty {
-            update.confirmedSelection = RimeConfirmedSelection(
-                source: .expandedPanel, selectedText: selected,
-                rawInputBeforeSelection: raw)
+        return verifiedSelection(selected: selected, source: .expandedPanel) {
+            bridge.selectCandidateAbsolute(Int32(index))
         }
+    }
+
+    private func verifiedSelection(
+        selected: String?, source: RimeConfirmedSelection.Source,
+        perform: () -> Bool
+    ) -> RimeUpdate {
+        let before = bridge.compositionEvidence()
+        let succeeded = perform()
+        let after = bridge.compositionEvidence()
+        var update = snapshot()
+        guard succeeded, let selected, !selected.isEmpty, !before.rawInput.isEmpty else {
+            tentativeSegment = nil
+            return update
+        }
+
+        if let prior = tentativeSegment {
+            tentativeSegment = nil
+            if Self.oneHan(selected),
+               before.rawInput == prior.originalRaw,
+               before.preedit == prior.first.selectedText + prior.remainingPreedit,
+               let committed = update.commit,
+               committed == prior.first.selectedText + selected,
+               after.rawInput.isEmpty {
+                update.confirmedSegments = [
+                    prior.first,
+                    RimeConfirmedSelection(source: source, selectedText: selected,
+                                           rawInputBeforeSelection: prior.remainingKeys)
+                ]
+            }
+            return update
+        }
+
+        // Preserve the existing proven full-candidate event contract.
+        if let committed = update.commit, committed == selected {
+            update.confirmedSelection = RimeConfirmedSelection(
+                source: source, selectedText: selected,
+                rawInputBeforeSelection: before.rawInput)
+            return update
+        }
+
+        // Strictly require Rime's *actual* two spaced phonetic syllables.
+        // We do not split initial-only shorthand, unspaced guesses, or
+        // ambiguous multi-syllable candidates ourselves.
+        guard update.commit == nil, Self.oneHan(selected),
+              before.selectionStart == 0,
+              after.selectionStart == selected.utf8.count,
+              after.rawInput == before.rawInput,
+              after.commitPreview.hasPrefix(selected) else { return update }
+        let tokens = before.preedit.split(whereSeparator: { $0.isWhitespace })
+        guard tokens.count == 2,
+              let firstKeys = Self.keys(forBopomoSyllable: String(tokens[0])),
+              let secondKeys = Self.keys(forBopomoSyllable: String(tokens[1])),
+              firstKeys + secondKeys == before.rawInput,
+              after.preedit == selected + String(tokens[1]) else { return update }
+        tentativeSegment = TentativeSegment(
+            first: RimeConfirmedSelection(source: source, selectedText: selected,
+                                          rawInputBeforeSelection: firstKeys),
+            originalRaw: before.rawInput, remainingPreedit: String(tokens[1]),
+            remainingKeys: secondKeys)
         return update
+    }
+
+    private static func oneHan(_ text: String) -> Bool {
+        guard text.unicodeScalars.count == 1,
+              let value = text.unicodeScalars.first?.value else { return false }
+        return (0x4E00...0x9FFF).contains(value) || (0x3400...0x4DBF).contains(value)
+    }
+
+    private static let symbolToKey: [String: String] = {
+        var result: [String: String] = [:]
+        for row in BopomoLayout.rows {
+            for key in row { result[key.symbol] = String(key.char) }
+        }
+        return result
+    }()
+
+    private static func keys(forBopomoSyllable text: String) -> String? {
+        guard !text.isEmpty else { return nil }
+        var result = ""
+        for symbol in text {
+            guard let key = symbolToKey[String(symbol)] else { return nil }
+            result += key
+        }
+        return PersonalPhraseLearning.isFullSyllable(result) ? result : nil
     }
 
     /// Test-only explicit flush before comparing a fresh process.
@@ -67,8 +145,11 @@ final class RimeEngineLibrime: RimeEngine {
     // Ephemeral observation only; not evidence of per-character readings.
     func compositionEvidence() -> RimeCompositionEvidence { bridge.compositionEvidence() }
 
-    func clear() { bridge.clear() }
-    func setOption(_ name: String, _ value: Bool) { bridge.setOption(name, value: value) }
+    func clear() { tentativeSegment = nil; bridge.clear() }
+    func setOption(_ name: String, _ value: Bool) {
+        tentativeSegment = nil
+        bridge.setOption(name, value: value)
+    }
     func getOption(_ name: String) -> Bool { bridge.getOption(name) }
 
     /// 讀取順序：先取 commit（按鍵可能已上字），再取 preedit/候選。
