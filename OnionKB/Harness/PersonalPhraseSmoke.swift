@@ -58,6 +58,24 @@ enum PersonalPhraseSmoke {
             // First observation was written by a *different* process.
             out["realSelectionsPass"] = recordOneBoundary(allowed: true)
             out["learned"] = store.phrases.contains { $0.text == word }
+            let fullNative = rawCandidates(full)
+            let fullChoices = PersonalCandidateFusion.merge(
+                native: fullNative, personal: store.suggestions(for: full), rawInput: full)
+            let shortNative = rawCandidates(short)
+            let shortChoices = PersonalCandidateFusion.merge(
+                native: shortNative, personal: store.suggestions(for: short), rawInput: short)
+            out["fusedFullFirst"] = fullChoices.first?.candidate.text == word &&
+                fullChoices.first?.personalInput == full &&
+                fullChoices.first?.nativeIndex == nil
+            out["fusedInitialFirst"] = shortChoices.first?.candidate.text == word &&
+                shortChoices.first?.personalInput == short &&
+                shortChoices.first?.nativeIndex == nil
+            // Candidate-bar and expanded choices both use this same index
+            // mapping. No native candidate is selected by a shifted index.
+            out["nativeIndicesPreserved"] = fullNative.indices.allSatisfy { index in
+                fullChoices[index + 1].nativeIndex == index &&
+                fullChoices[index + 1].candidate.text == fullNative[index].text
+            }
         case "verify":
             out["persisted"] = store.phrases.contains { $0.text == word }
             store.confirmPersonal(word, input: short)
