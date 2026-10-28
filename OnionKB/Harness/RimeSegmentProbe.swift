@@ -29,6 +29,7 @@ enum RimeSegmentProbe {
             var second: [String: Any] = [:]
             var firstCommit: String? = nil
             var secondCommit: String? = nil
+            var secondSegments: [[String: String]] = []
             var firstEvent = false
             if let index {
                 let u = engine.selectCandidateAbsolute(index)
@@ -38,6 +39,9 @@ enum RimeSegmentProbe {
                 if let index2 = engine.allCandidates().firstIndex(where: { $0.text == "拷" }) {
                     let u2 = engine.selectCandidateAbsolute(index2)
                     secondCommit = u2.commit
+                    secondSegments = u2.confirmedSegments.map { e in
+                        ["text": e.selectedText, "syllableKeys": e.rawInputBeforeSelection]
+                    }
                     second = snapshot()
                 }
             }
@@ -45,7 +49,8 @@ enum RimeSegmentProbe {
                 "input": keys, "before": before, "firstTargetIndex": index as Any? ?? NSNull(),
                 "firstCommit": firstCommit as Any? ?? NSNull(),
                 "firstConfirmedEvent": firstEvent, "afterFirst": after,
-                "secondCommit": secondCommit as Any? ?? NSNull(), "afterSecond": second
+                "secondCommit": secondCommit as Any? ?? NSNull(),
+                "secondVerifiedSegments": secondSegments, "afterSecond": second
             ]
             // Suppress aggressive user words tracing outside the fixed fixtures.
             row["fixtureOnly"] = true
