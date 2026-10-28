@@ -6,11 +6,22 @@ struct Candidate {
     let comment: String?
 }
 
+/// 成功確認候選的最小事件。只在當次選字成功且 Rime 的 commit
+/// 完全等於選中候選時產生。rawInput 只供同一次處理期間判斷輸入來源；
+/// 不代表已經取得逐字完整注音，更不能直接拿來訓練個人詞庫。
+struct RimeConfirmedSelection {
+    enum Source { case candidateBar, expandedPanel }
+    let source: Source
+    let selectedText: String
+    let rawInputBeforeSelection: String
+}
+
 /// 一次按鍵/選字後的引擎狀態快照。
 struct RimeUpdate {
     var preedit: String           // 組字串（注音）；顯示於鍵盤內（§3.5）
     var candidates: [Candidate]
     var commit: String?           // 若產生上字文字
+    var confirmedSelection: RimeConfirmedSelection? = nil
 }
 
 /// 引擎協定——UI 只依賴此抽象。實作：`RimeEngineLibrime`（真）/`RimeEngineStub`（後備）。
