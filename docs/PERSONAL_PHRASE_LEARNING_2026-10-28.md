@@ -31,3 +31,12 @@ Known functional limits: only typed **independent one-character Rime commits** a
 3. Add explicit Chinese punctuation-boundary test without guessing arbitrary word breaks; cancel on editing/focus and consider opt-out defaults.
 4. Test keyboard Extension UI interaction in hosted Simulator App via UI automation, including selected personal candidate and restoring native candidate indices.
 5. Extend shorthand/whole-sentence quality tests (e.g. `ㄨㄅㄓㄉ`) only after this vertical slice is stable.
+
+## Follow-up after the enhanced runtime pass
+
+- [Simulator run 40644050799](https://github.com/jush0147/stoat-keyboard/actions/runs/40644050799) finished **SUCCESS**, verifying saved first observation across processes, a second actual Rime candidate selection, merged full-no-tone/initial-only Top-1, original native index mapping, negative feedback, disallowed field, cancellation and reset.
+- `PersonalPhraseLearning.finishAfterSymbol` now recognizes explicit Chinese punctuation (，。、！？；：) and ASCII terminal punctuation as phrase boundaries; numbers, quote pairs, and decorative symbols invalidate pending evidence instead of being learned.
+- `KeyboardViewController` calls the same boundary helper from the idle punctuation row and the 123 symbols page. A temporary switch from Zhuyin to 123 preserves pending evidence only until the next explicit symbol; other mode changes cancel.
+- A genuine iOS Simulator punctuation/no-boundary scenario was added to `PersonalPhraseSmoke` and the runtime CI assertion. [Run 40644857534](https://github.com/jush0147/stoat-keyboard/actions/runs/40644857534) was **pending** at documentation time; check the final status before claiming punctuation behavior passed.
+- Full App/Extension build after the production punctuation integration: [run 40644812347](https://github.com/jush0147/stoat-keyboard/actions/runs/40644812347) **SUCCESS**.
+- Do not count a build or a queued runtime test as proof of end-to-end punctuation behavior. The separate Simulator-backed new-word test is mandatory.
