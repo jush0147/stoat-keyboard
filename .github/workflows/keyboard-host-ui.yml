@@ -55,7 +55,23 @@ jobs:
           if not choices: raise SystemExit("No iPhone model")
           print(choices[0]["identifier"])
           ')
-          UDID=$(xcrun simctl create "Stoat-Real-Host-UI" "$TYPE" "$RUNTIME")
+          # Prefer the installed/precreated simulator to avoid a lengthy
+          # first-boot LaunchServices migration on a freshly created device.
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json,sys
+          devices=json.load(sys.stdin)["devices"].get(sys.argv[1],[])
+          choices=[d for d in devices
+                   if d.get("isAvailable",True)
+                   and d.get("state")=="Shutdown"
+                   and d.get("deviceTypeIdentifier")==sys.argv[2]]
+          print(choices[0]["udid"] if choices else "")
+          ' "$RUNTIME" "$TYPE")
+          if [ -z "$UDID" ]; then
+            UDID=$(xcrun simctl create "Stoat-Real-Host-UI" "$TYPE" "$RUNTIME")
+            echo "No precreated simulator; initialized $UDID"
+          else
+            echo "Using cached SDK-matched simulator $UDID"
+          fi
           echo "SIM_UDID=$UDID" >> "$GITHUB_ENV"
           python3 - "$UDID" <<'PY'
           import pathlib,plistlib,sys
@@ -66,7 +82,10 @@ jobs:
           p.write_bytes(plistlib.dumps(data))
           PY
           xcrun simctl boot "$UDID"
-          perl -e 'alarm 240; exec @ARGV' xcrun simctl bootstatus "$UDID" -b
+          # Previous cloud boot timed out after 240s while iOS was running
+          # -0LaunchServicesMigrator, before any keyboard assertions. Give
+          # the runner more time, but continue to fail visibly if not ready.
+          perl -e 'alarm 540; exec @ARGV' xcrun simctl bootstatus "$UDID" -b
 
       - name: Build and install actual Stoat.app with keyboard extension
         run: |
