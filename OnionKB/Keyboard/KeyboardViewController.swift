@@ -1288,7 +1288,13 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func apply(_ update: RimeUpdate) {
-        if let event = update.confirmedSelection {
+        if !update.confirmedSegments.isEmpty {
+            // Only native Rime's final exact commit authorizes the prior
+            // partial selections; never learn tentative composition text.
+            for event in update.confirmedSegments {
+                personalLearning.accept(event, allowed: canLearnPersonalPhrases)
+            }
+        } else if let event = update.confirmedSelection {
             personalLearning.accept(event, allowed: canLearnPersonalPhrases)
         } else if update.commit != nil {
             personalLearning.cancel()
