@@ -15,6 +15,13 @@ final class PersonalPhraseLearning {
         let keys: String
     }
 
+    // Persist one confirmed observation too, otherwise a user who exits the
+    // keyboard between uses never reaches the second-confirmation threshold.
+    private struct PersistedState: Codable {
+        var phrases: [PersonalPhrase]
+        var observations: [String: Int]
+    }
+
     static var defaultStorageURL: URL {
         RimePaths.userDirURL.appendingPathComponent("personal-phrases-v1.json")
     }
@@ -24,18 +31,40 @@ final class PersonalPhraseLearning {
     private var pending: [Syllable] = []
     private var observations: [String: Int] = [:]
     private let maxPhrases = 500
+    private let maxObservations = 500
 
     init(storageURL: URL = PersonalPhraseLearning.defaultStorageURL) {
         self.storageURL = storageURL
-        if let data = try? Data(contentsOf: storageURL),
-           data.count <= 256_000,
-           let decoded = try? JSONDecoder().decode([PersonalPhrase].self, from: data) {
-            phrases = Array(decoded.filter {
-                $0.text.count >= 2 && $0.text.count <= 6 &&
-                $0.fullKeys.count >= 4 && !$0.initials.isEmpty &&
-                $0.confirmations > 0
-            }.prefix(maxPhrases))
+        guard let data = try? Data(contentsOf: storageURL), data.count <= 256_000 else { return }
+        let decoder = JSONDecoder()
+        if let state = try? decoder.decode(PersistedState.self, from: data) {
+            phrases = Self.validPhrases(state.phrases, limit: maxPhrases)
+            observations = Dictionary(uniqueKeysWithValues: state.observations
+                .filter { Self.isValidObservation($0.key, $0.value) }
+                .sorted { $0.key < $1.key }
+                .prefix(maxObservations).map { ($0.key, $0.value) })
+        } else if let old = try? decoder.decode([PersonalPhrase].self, from: data) {
+            // Migration from the first on-device JSON array; no reset required.
+            phrases = Self.validPhrases(old, limit: maxPhrases)
         }
+    }
+
+    private static func validPhrases(_ entries: [PersonalPhrase], limit: Int) -> [PersonalPhrase] {
+        Array(entries.filter { phrase in
+            phrase.text.count >= 2 && phrase.text.count <= 6 &&
+            phrase.text.allSatisfy { isHanCharacter(String($0)) } &&
+            phrase.fullKeys.count >= 4 && phrase.fullKeys.count <= 18 &&
+            phrase.initials.count == phrase.text.count &&
+            phrase.confirmations > 0 && phrase.confirmations <= 10_000
+        }.prefix(limit))
+    }
+
+    private static func isValidObservation(_ key: String, _ count: Int) -> Bool {
+        guard count == 1 else { return false }
+        let parts = key.split(separator: "|", omittingEmptySubsequences: false)
+        return parts.count == 2 && (2...6).contains(parts[0].count) &&
+               parts[0].allSatisfy { isHanCharacter(String($0)) } &&
+               (4...18).contains(parts[1].count)
     }
 
     /// A single *selected and actually committed* ideograph with a uniquely
@@ -65,15 +94,19 @@ final class PersonalPhraseLearning {
         let full = pending.map(\.keys).joined()
         let initials = pending.compactMap { $0.keys.first }.map(String.init).joined()
         let key = text + "|" + full
-        let count = (observations[key] ?? 0) + 1
-        observations[key] = min(count, 2)
-        guard count >= 2 else { return nil }
         if let idx = phrases.firstIndex(where: { $0.text == text && $0.fullKeys == full }) {
             phrases[idx].confirmations = min(phrases[idx].confirmations + 1, 10_000)
-        } else {
-            guard phrases.count < maxPhrases else { return nil }
+        } else if observations[key] == 1 {
+            // The second verified occurrence may happen after a process restart.
+            observations.removeValue(forKey: key)
+            guard phrases.count < maxPhrases else { save(); return nil }
             phrases.append(PersonalPhrase(text: text, fullKeys: full,
                                           initials: initials, confirmations: 2))
+        } else {
+            guard observations.count < maxObservations else { return nil }
+            observations[key] = 1
+            save()
+            return nil
         }
         save()
         return phrases.first { $0.text == text && $0.fullKeys == full }
@@ -126,7 +159,8 @@ final class PersonalPhraseLearning {
         do {
             try FileManager.default.createDirectory(at: storageURL.deletingLastPathComponent(),
                                                     withIntermediateDirectories: true)
-            let data = try JSONEncoder().encode(phrases)
+            let data = try JSONEncoder().encode(PersistedState(phrases: phrases,
+                                                               observations: observations))
             try data.write(to: storageURL, options: .atomic)
         } catch {
             // Fail closed: learning may be unavailable, typing still works.
@@ -148,7 +182,6 @@ final class PersonalPhraseLearning {
         guard !keys.isEmpty, keys.count <= 3 else { return false }
         let toneKeys: Set<Character> = ["3", "4", "6", "7"]
         guard !keys.contains(where: { toneKeys.contains($0) }) else { return false }
-        let initial: Set<Character> = Set("1qaz2wsx3edc4rfv5tgb6yhn") // filtered by toneKeys below
         let consonants: Set<Character> = Set("1qaz2wsxedcrfvtgbyhn")
         let medials: Set<Character> = Set("ujm")
         let finals: Set<Character> = Set("8i9o0pkl;/.,-")
@@ -166,7 +199,6 @@ final class PersonalPhraseLearning {
                 return false
             }
         }
-        _ = initial // kept separate from the tone key blacklist
         return seenMedial || seenFinal
     }
 }
