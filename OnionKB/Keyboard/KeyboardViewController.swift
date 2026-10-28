@@ -373,6 +373,10 @@ final class KeyboardViewController: UIInputViewController {
                                     children: [gtint("無色", 0), gtint("藍", 1), gtint("灰", 2), gtint("暖", 3)]))
             }
         }
+        items.append(UIAction(title: "清除所有個人學習短語", attributes: .destructive) { [weak self] _ in
+            self?.personalLearning.reset()
+            self?.refreshOptionsMenu()
+        })
         items.append(toggle("注音內嵌輸入框（關＝顯候選列、較快）", Self.embeddedKey, localOpt(Self.embeddedKey, default: true)) { [weak self] _ in self?.embeddedModeChanged() })
         items.append(toggle("常駐數字列", Self.numberRowKey, localOpt(Self.numberRowKey, default: false)) { [weak self] _ in self?.rebuildKeyRows() })
         items.append(toggle("注音鍵英文提示", Self.engHintKey, localOpt(Self.engHintKey)) { [weak self] _ in self?.rebuildKeyRows() })
