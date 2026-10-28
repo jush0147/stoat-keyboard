@@ -195,7 +195,7 @@ final class PersonalPhraseLearning {
     /// segment boundaries. A full syllable is 1 initial, optional medial and
     /// optional rhyme, with a required medial/rhyme if there is an initial.
     /// Restrict to one unambiguous no-tone syllable, not several syllables.
-    private static func isFullSyllable(_ keys: String) -> Bool {
+    static func isFullSyllable(_ keys: String) -> Bool {
         guard !keys.isEmpty, keys.count <= 3 else { return false }
         let toneKeys: Set<Character> = ["3", "4", "6", "7"]
         guard !keys.contains(where: { toneKeys.contains($0) }) else { return false }
