@@ -95,7 +95,6 @@ final class KeyboardViewController: UIInputViewController {
     private var personalCandidateInputs: [Int: String] = [:]
     private var lastPersonalCommit: String?
     private var lastPersonalCommitAt: Date = .distantPast
-    private var lastRawKeys = ""
     private var bopomoKeys: [(key: BopomoLayout.Key, main: UIButton, eng: UILabel)] = []
     private var cnEnButton: UIButton?                                // 中/英 快切鍵
     private var shiftButton: UIButton?                              // ⇧ 英文 shift 實鍵（buildEnglishRows 指派；updateModeStyling/refreshEnglishCase 用）
@@ -202,7 +201,6 @@ final class KeyboardViewController: UIInputViewController {
     override func textDidChange(_ textInput: UITextInput?) {
         super.textDidChange(textInput)
         applyKeyboardAppearance()   // App 切換/聚焦時深淺可能變
-        personalLearning.cancel()   // Host editing/focus changed: no cross-field phrase learning.
         styleReturnKey()            // 有無文字變動→ return 灰↔藍即時更新（§109）
     }
 
