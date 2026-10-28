@@ -8,6 +8,17 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy, nullable) NSString *comment;
 @end
 
+/// Read-only composition/segment evidence for cloud Simulator probes and
+/// eventual verified partial-selection handling. All strings are ephemeral.
+@interface RimeCompositionEvidence : NSObject
+@property (nonatomic, copy) NSString *rawInput;
+@property (nonatomic, copy) NSString *preedit;
+@property (nonatomic, copy) NSString *commitPreview;
+@property (nonatomic) NSInteger selectionStart;
+@property (nonatomic) NSInteger selectionEnd;
+@property (nonatomic) NSInteger cursorPosition;
+@end
+
 /// librime C API 的 Objective-C++ 薄包裝（SPEC §15.3 RimeEngine 的真實作）。
 /// 用 prebuilt_data_dir 指向 bundle 內預編譯 .bin（§5.8）→ 免裝置部署。
 @interface RimeBridge : NSObject
@@ -23,6 +34,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (nullable NSString *)takeCommit;        // 有上字文字則回傳並清除
 - (NSString *)preedit;                    // 組字串（librime 格式化，依候選變動）
 - (NSString *)rawInput;                    // 原始輸入（大千鍵序，§32 #1 自繪 preedit 用）
+- (RimeCompositionEvidence *)compositionEvidence; // read-only selection offsets and commit preview
 - (NSArray<RimeCandidateObj *> *)candidates;
 - (NSArray<RimeCandidateObj *> *)allCandidates;   // 全候選列舉（展開面板，§89；上限 200）
 - (BOOL)selectCandidate:(int)index;       // 當前頁索引
