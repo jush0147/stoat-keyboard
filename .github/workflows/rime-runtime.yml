@@ -119,7 +119,7 @@ jobs:
           set -euo pipefail
           APP="$RUNNER_TEMP/rime-harness-derived/Build/Products/Debug-iphonesimulator/KBHarness.app"
           DATA_DIR=$(xcrun simctl get_app_container "$SIM_UDID" com.kbtest.harness data)
-          for PHASE in observe-once train verify reset privacy punctuation; do
+          for PHASE in observe-once train verify reset privacy punctuation segmented segment-cancel; do
             xcrun simctl terminate "$SIM_UDID" com.kbtest.harness || true
             xcrun simctl launch "$SIM_UDID" com.kbtest.harness "--personal-phrase-phase=$PHASE"
             RESULT="$DATA_DIR/Documents/personal-phrase-$PHASE.json"
@@ -136,8 +136,8 @@ jobs:
           root=os.environ["RUNNER_TEMP"]
           def load(p):
               return json.load(open(f"{root}/personal-phrase-{p}.json", encoding="utf-8"))
-          first,train,verify,reset,privacy,punctuation=map(load,
-              ("observe-once","train","verify","reset","privacy","punctuation"))
+          first,train,verify,reset,privacy,punctuation,segmented,canceled=map(load,
+              ("observe-once","train","verify","reset","privacy","punctuation","segmented","segment-cancel"))
           assert first["engineReady"] and first["originalPhraseAbsent"],first
           assert first["realSelectionsPass"] and first["notLearnedYet"],first
           assert train["realSelectionsPass"] and train["learned"],train
@@ -151,6 +151,9 @@ jobs:
           assert punctuation["nonBoundarySelectionPass"] and punctuation["nonBoundaryNoLearning"],punctuation
           assert punctuation["punctuationSelectionPass"] and punctuation["punctuationLearned"],punctuation
           assert punctuation["punctuationRecognition"],punctuation
+          assert segmented["nativeSegmentSelectionsVerified"],segmented
+          assert segmented["segmentedNewPhraseLearned"] and segmented["segmentedTop1"],segmented
+          assert canceled["discardedPartialNotReplayed"],canceled
           assert reset["persisted"] and not reset["fullFound"] and not reset["initialFound"],reset
           print("Real Rime absent phrase learned across restarts, recalled, corrected, privacy-gated and reset")
           PY
@@ -174,6 +177,11 @@ jobs:
           assert d["ready"],d
           assert len(d["cases"])==3,d
           assert all(x["fixtureOnly"] for x in d["cases"]),d
+          two=next(x for x in d["cases"] if x["input"]=="dldl")
+          assert two["firstCommit"] is None and not two["firstConfirmedEvent"],two
+          assert two["secondCommit"]=="靠拷",two
+          assert two["secondVerifiedSegments"]==[
+              {"text":"靠","syllableKeys":"dl"},{"text":"拷","syllableKeys":"dl"}],two
           for x in d["cases"]:
               print(x)
           print("Actual Rime partial candidate observations recorded; learning safety not presumed")
