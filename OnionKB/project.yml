@@ -99,3 +99,12 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.kbtest.host-uitests
         GENERATE_INFOPLIST_FILE: "YES"
         TEST_TARGET_NAME: KBHarness
+
+schemes:
+  KeyboardExtensionHostUITests:
+    build:
+      targets:
+        KeyboardExtensionHostUITests: test
+    test:
+      targets:
+        - KeyboardExtensionHostUITests
