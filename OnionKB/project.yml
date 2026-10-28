@@ -83,3 +83,19 @@ targets:
         INFOPLIST_FILE: Harness/Info.plist
         GENERATE_INFOPLIST_FILE: "NO"
         SWIFT_OBJC_BRIDGING_HEADER: Keyboard/OnionKBKeyboard-Bridging-Header.h
+
+  # Independent XCUITest runner. Tests the real installed .appex after iOS
+  # Settings enables it and an ordinary KBHarness UITextField becomes first
+  # responder. Distinct from embedded KeyboardViewController smoke.
+  KeyboardExtensionHostUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests
+    dependencies:
+      - target: KBHarness
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kbtest.host-uitests
+        GENERATE_INFOPLIST_FILE: "YES"
+        TEST_TARGET_NAME: KBHarness
