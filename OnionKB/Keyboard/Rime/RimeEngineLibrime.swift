@@ -62,6 +62,8 @@ final class RimeEngineLibrime: RimeEngine {
     /// Test-only explicit flush before comparing a fresh process.
     func syncUserData() -> Bool { bridge.syncUserData() }
 
+    func currentRawInput() -> String { bridge.rawInput() }
+
     func clear() { bridge.clear() }
     func setOption(_ name: String, _ value: Bool) { bridge.setOption(name, value: value) }
     func getOption(_ name: String) -> Bool { bridge.getOption(name) }
