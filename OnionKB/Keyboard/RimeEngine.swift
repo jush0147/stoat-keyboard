@@ -22,6 +22,9 @@ struct RimeUpdate {
     var candidates: [Candidate]
     var commit: String?           // 若產生上字文字
     var confirmedSelection: RimeConfirmedSelection? = nil
+    /// Only emitted after the final native Rime commit proves every selected
+    /// segment in one uninterrupted two-syllable composition.
+    var confirmedSegments: [RimeConfirmedSelection] = []
 }
 
 /// 引擎協定——UI 只依賴此抽象。實作：`RimeEngineLibrime`（真）/`RimeEngineStub`（後備）。
