@@ -92,7 +92,6 @@ final class KeyboardViewController: UIInputViewController {
     private weak var candidateRowRef: UIStackView?   // 非注音模式隱藏（§80）
     private var currentCandidates: [Candidate] = []
     private lazy var personalLearning = PersonalPhraseLearning()
-    private var personalCandidateInputs: [Int: String] = [:]
     private var lastPersonalCommit: String?
     private var lastPersonalCommitAt: Date = .distantPast
     private var learningDocumentID: UUID?
@@ -1316,17 +1315,12 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func refresh(_ update: RimeUpdate) {
-        currentCandidates = update.candidates
-        personalCandidateInputs.removeAll()
-        if !update.preedit.isEmpty, canLearnPersonalPhrases,
-           let native = engine as? RimeEngineLibrime {
-            let raw = native.currentRawInput()
-            let existing = Set(currentCandidates.map(\.text))
-            for phrase in personalLearning.suggestions(for: raw) where !existing.contains(phrase.text) {
-                personalCandidateInputs[currentCandidates.count] = raw
-                currentCandidates.append(Candidate(text: phrase.text, comment: "個人詞"))
-            }
-        }
+        let raw = (!update.preedit.isEmpty && canLearnPersonalPhrases)
+            ? ((engine as? RimeEngineLibrime)?.currentRawInput() ?? "") : ""
+        let choices = PersonalCandidateFusion.merge(
+            native: update.candidates, personal: personalLearning.suggestions(for: raw),
+            rawInput: raw)
+        currentCandidates = choices.map(\.candidate)
         preeditText = update.preedit.isEmpty ? " " : update.preedit             // §155 isPreeditEmpty 狀態來源（注音已內嵌輸入框）
         // §173 注音 preedit 顯示：內嵌 ON→輸入框(marked text)、隱藏候選列 label；OFF→候選列 label、不碰宿主（快）。
         if useMarkedText {
@@ -1358,14 +1352,14 @@ final class KeyboardViewController: UIInputViewController {
             let b = candButton(slot); slot += 1                    // §164 重用，不每鍵新配置
             b.setTitle(cand.text, for: .normal)                    // 原廠候選無編號（§53）
             b.titleLabel?.font = font
-            let idx = i
+            let choice = choices[i]
             b.onTap = { [weak self] in
                 guard let self else { return }
                 self.playClick()
-                if let input = self.personalCandidateInputs[idx] {
-                    self.commitPersonalCandidate(cand.text, input: input)
-                } else {
-                    self.apply(self.engine.selectCandidate(idx))
+                if let input = choice.personalInput {
+                    self.commitPersonalCandidate(choice.candidate.text, input: input)
+                } else if let nativeIndex = choice.nativeIndex {
+                    self.apply(self.engine.selectCandidate(nativeIndex))
                 }
             }   // §154 音效 + 選字
             if !didHighlight {                                      // §148 首選 pill：白圓角底 + 內距，餘候選扁平（reuse 時須清掉舊 pill）
@@ -1409,9 +1403,12 @@ final class KeyboardViewController: UIInputViewController {
 
     /// 展開：隱鍵盤、改顯全候選格（依字寬 wrap、左對齊、絕對索引選字）。
     private func buildExpandedPanel() {
-        let cands = (engine.allCandidates() + personalLearning.suggestions(for: (engine as? RimeEngineLibrime)?.currentRawInput() ?? "").filter { phrase in
-            !engine.allCandidates().contains { $0.text == phrase.text }
-        }.map { Candidate(text: $0.text, comment: "個人詞") }).enumerated().filter { Self.isRenderable($0.element.text) }
+        let raw = canLearnPersonalPhrases
+            ? ((engine as? RimeEngineLibrime)?.currentRawInput() ?? "") : ""
+        let cands = PersonalCandidateFusion.merge(
+            native: engine.allCandidates(),
+            personal: personalLearning.suggestions(for: raw), rawInput: raw
+        ).filter { Self.isRenderable($0.candidate.text) }
         guard !cands.isEmpty else { return }
 
         let scroll = UIScrollView()
@@ -1438,8 +1435,8 @@ final class KeyboardViewController: UIInputViewController {
             rowStack.distribution = .fill
             var placed = 0
             while placed < cols, i < arr.count {
-                let (absIdx, cand) = arr[i]
-                rowStack.addArrangedSubview(expandedCandButton(cand.text, absoluteIndex: absIdx, font: font, width: cellW))
+                let cand = arr[i]
+                rowStack.addArrangedSubview(expandedCandButton(cand, font: font, width: cellW))
                 placed += 1; i += 1
             }
             if placed < cols {                                   // 末列補 spacer 維持左對齊
@@ -1471,9 +1468,9 @@ final class KeyboardViewController: UIInputViewController {
         expandButton.setImage(UIImage(systemName: "chevron.up"), for: .normal)
     }
 
-    private func expandedCandButton(_ text: String, absoluteIndex: Int, font: UIFont, width: CGFloat) -> UIButton {
+    private func expandedCandButton(_ choice: PersonalCandidateChoice, font: UIFont, width: CGFloat) -> UIButton {
         let b = KeyButton(frame: .zero)
-        b.setTitle(text, for: .normal)
+        b.setTitle(choice.candidate.text, for: .normal)
         b.titleLabel?.font = font
         b.titleLabel?.adjustsFontSizeToFitWidth = true           // 長詞縮放不溢出欄（§91）
         b.titleLabel?.minimumScaleFactor = 0.6
@@ -1486,11 +1483,10 @@ final class KeyboardViewController: UIInputViewController {
         b.heightAnchor.constraint(equalToConstant: 46).isActive = true
         b.addAction(UIAction { [weak self] _ in
             guard let self else { return }
-            if absoluteIndex >= self.engine.allCandidates().count {
-                let raw = (self.engine as? RimeEngineLibrime)?.currentRawInput() ?? ""
-                self.commitPersonalCandidate(text, input: raw)
-            } else {
-                self.apply(self.engine.selectCandidateAbsolute(absoluteIndex))
+            if let input = choice.personalInput {
+                self.commitPersonalCandidate(choice.candidate.text, input: input)
+            } else if let nativeIndex = choice.nativeIndex {
+                self.apply(self.engine.selectCandidateAbsolute(nativeIndex))
             }
             if self.isExpanded { self.collapseExpanded() }   // 選字後收合回候選列（§89）
         }, for: .touchUpInside)
