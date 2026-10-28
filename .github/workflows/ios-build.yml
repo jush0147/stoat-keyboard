@@ -5,6 +5,14 @@ on:
     branches:
       - dev/ios-build-baseline
       - dev/learning-events
+    paths:
+      - "OnionKB/App/**"
+      - "OnionKB/Keyboard/**"
+      - "OnionKB/Shared/**"
+      - "OnionKB/project.yml"
+      - "ios-build/out/**"
+      - "RimeData-variants/**"
+      - ".github/workflows/ios-build.yml"
   pull_request:
     branches:
       - main
