@@ -83,6 +83,23 @@ final class PersonalPhraseLearning {
                                 keys: event.rawInputBeforeSelection))
     }
 
+    /// Explicit punctuation is a safe boundary without requiring a space in
+    /// ordinary Chinese typing. A number, emoji or decorative symbol is not.
+    static func isExplicitPhraseBoundary(_ symbol: String) -> Bool {
+        let terminators: Set<String> = ["，", "。", "、", "！", "？", "；", "：",
+                                        ",", ".", "!", "?", ";", ":"]
+        return terminators.contains(symbol)
+    }
+
+    @discardableResult
+    func finishAfterSymbol(_ symbol: String, allowed: Bool) -> PersonalPhrase? {
+        guard Self.isExplicitPhraseBoundary(symbol) else {
+            cancel()
+            return nil
+        }
+        return finishBoundary(allowed: allowed)
+    }
+
     /// An explicit space/newline while Rime has no active composition is a
     /// phrase boundary. Requiring two identical observations limits mistakes.
     /// We do NOT join arbitrary adjacent host text or guess phrase boundaries.
