@@ -25,6 +25,9 @@ final class HarnessAppDelegate: UIResponder, UIApplicationDelegate {
             let phase = String(personalArg.dropFirst("--personal-phrase-phase=".count))
             DispatchQueue.main.async { PersonalPhraseSmoke.execute(phase: phase) }
         }
+        if ProcessInfo.processInfo.arguments.contains("--rime-segment-probe") {
+            DispatchQueue.main.async { RimeSegmentProbe.execute() }
+        }
         if ProcessInfo.processInfo.arguments.contains("--rime-event-smoke") {
             // Only hardcoded, non-sensitive cases; the report is written into
             // this Simulator app's Documents folder for GitHub CI to inspect.
